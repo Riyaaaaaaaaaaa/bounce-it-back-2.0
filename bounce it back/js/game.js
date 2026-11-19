@@ -1,29 +1,35 @@
-/* Bounce it Back — v3
- * Two mirrored paddles keep a ball alive. Every bounce scores, centre hits build a combo,
- * and a miss ends the run. Plain canvas + Web Audio, no build step, no assets.
+/* Bounce it Back — v4
+ * Two mirrored paddles keep a ball alive. Every bounce scores, perfect centre hits build a combo,
+ * and a miss ends the run. Modes: Classic, Survival, 60-second Rush and local Two-player.
+ * Plain canvas + Web Audio, no build step, no assets.
  */
 (() => {
   'use strict';
 
-  // ---------------------------------------------------------------- palette & helpers
+  // ================================================================ palette & helpers
   const C = {
     ink: '#1c1b1d', paper: '#f2eee8', rust: '#c4502a', rose: '#d9b8b0',
     sand: '#e6d5b8', sage: '#a9b8a0', slate: '#3d4f6b',
-    mist: '#b9c6d6', ochre: '#c9a46b', ember: '#e0892f',
+    mist: '#b9c6d6', ochre: '#c9a46b', ember: '#e0892f', gold: '#d9a441',
   };
   const FONT_SANS = '"Bricolage Grotesque", system-ui, sans-serif';
   const FONT_SERIF = '"Instrument Serif", Georgia, serif';
   const FONT_MONO = '"Cutive Mono", ui-monospace, monospace';
 
   const $ = (s) => document.querySelector(s);
+  const $$ = (s) => [...document.querySelectorAll(s)];
   const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
   const lerp = (a, b, t) => a + (b - a) * t;
   const rand = (a, b) => a + Math.random() * (b - a);
+  const pick = (arr) => arr[(Math.random() * arr.length) | 0];
   const damp = (k, dt) => 1 - Math.exp(-k * dt); // frame-rate independent smoothing factor
   // Clamped at 0: at t = 0 floating-point error gives a tiny negative, and arc() throws on a negative radius.
   const easeOutBack = (t) => { const c = 1.7; return Math.max(0, 1 + (c + 1) * Math.pow(t - 1, 3) + c * Math.pow(t - 1, 2)); };
   const hexRgb = (h) => { const n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
   const mixRgb = (a, b, t) => a.map((v, i) => lerp(v, b[i], t));
+  const fmtTime = (s) => { s = Math.max(0, s); const m = Math.floor(s / 60); const r = s - m * 60; return `${m}:${r < 10 ? '0' : ''}${r.toFixed(1)}`; };
+  const fmtClock = (s) => { s = Math.max(0, Math.ceil(s)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+  const setText = (node, txt) => { if (node.textContent !== txt) node.textContent = txt; };
 
   const store = {
     get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } },
@@ -35,11 +41,25 @@
   if (motionQuery && motionQuery.addEventListener) motionQuery.addEventListener('change', (e) => { reduced = e.matches; });
   const finePointer = window.matchMedia ? matchMedia('(pointer: fine)').matches : true;
 
-  // ---------------------------------------------------------------- tuning
-  const LEVEL_HITS = 8;          // bounces per level
+  // ================================================================ tuning & content
+  const LEVEL_HITS = 8;          // bounces per level (Classic)
   const SPEED_START = 0.68;      // level 1 is gentle...
   const SPEED_PER_LEVEL = 0.16;  // ...and every level adds a noticeable kick
-  const SPEED_MAX = 2.5;
+  const RUSH_TIME = 60;
+  const DUEL_TARGET = 5;
+  const RAGE_TIME = 10;
+  const RAGE_BONUS = 250;
+  const EVENT_WARN = 2;
+  const EVENT_LEN = 7;
+  const MILESTONES = [100, 500, 1000, 2000, 5000, 10000];
+
+  const MODES = {
+    classic:  { name: 'Classic', desc: 'Levels, orbs, random events, and a boss every 5 levels.', unit: 'points' },
+    survival: { name: 'Survival', desc: 'No levels, no orbs, no breaks. It just keeps getting faster.', unit: 'survived' },
+    rush:     { name: '60-second rush', desc: 'Score as much as you can in 60 seconds. A miss costs 3 s.', unit: 'points in 60 s' },
+    duel:     { name: 'Two players', desc: 'Top vs bottom on one screen. First to 5 points wins.', unit: '' },
+  };
+  const validMode = (m) => (MODES[m] ? m : 'classic');
 
   // Orbs. `min` is the level they start appearing at; `dur` is seconds of effect.
   const ORBS = {
@@ -48,59 +68,118 @@
     shield: { fill: C.mist,  w: 10, min: 1, name: 'Shield', desc: 'Saves one miss (stacks to 2)' },
     multi:  { fill: C.rose,  w: 12, min: 2, name: 'Multi-ball', desc: 'Two extra balls' },
     slow:   { fill: C.slate, w: 11, min: 2, dur: 6, name: 'Slow-mo', desc: 'Time slows, you don’t' },
-    magnet: { fill: C.ochre, w: 10, min: 3, dur: 8, name: 'Magnet', desc: 'Paddles pull the ball in' },
+    magnet: { fill: C.ochre, w: 10, min: 3, dur: 8, name: 'Magnet', desc: 'Pulls the ball to your sweet spot' },
     double: { fill: C.rust,  w: 9,  min: 3, dur: 8, name: 'Double', desc: 'All points ×2, fireball' },
     shrink: { fill: C.ink,   w: 9,  min: 4, dur: 7, name: 'Shrink', desc: 'Bad! Tiny paddles. Steer clear', bad: true },
   };
   const TIMED = Object.keys(ORBS).filter((k) => ORBS[k].dur);
 
+  const EVENTS = {
+    gravity:   { name: 'Gravity shift', desc: 'The ball curves sideways' },
+    chaos:     { name: 'Chaos mode', desc: 'The ball goes haywire' },
+    double:    { name: 'Double points', desc: 'Every bounce scores double' },
+    invisible: { name: 'Invisible ball', desc: 'Now you see it…' },
+    reverse:   { name: 'Reverse controls', desc: 'Left is right, right is left' },
+  };
+
+  // Combo tiers: consecutive perfect hits.
+  const TIERS = [
+    { at: 5, mult: 2, word: 'AMAZING!' },
+    { at: 10, mult: 3, word: 'UNSTOPPABLE!' },
+    { at: 20, mult: 5, word: 'RAGE MODE!' },
+  ];
+  const tierIdx = (streak) => TIERS.reduce((n, t) => (streak >= t.at ? n + 1 : n), 0);
+  const tierMult = (streak) => { const i = tierIdx(streak); return i ? TIERS[i - 1].mult : 1; };
+  const TIER_COLORS = [C.rust, C.ember, C.gold, C.rust];
+
   const UNLOCKS = {
-    2: 'new orbs: multi-ball & slow-mo',
+    2: 'new orbs: multi-ball & slow-mo · events begin',
     3: 'bumpers appear · magnet & double',
     4: 'careful: shrink orbs now spawn',
     6: 'a second bumper joins in',
   };
 
+  const BOSS_NAMES = ['Big Blob', 'Grumbles', 'The Smudge', 'Count Bounceula', 'Mega Pebble'];
+
   const BADGES = [
     { id: 'bullseye', icon: '◎', name: 'Bullseye', desc: 'Land a perfect centre hit' },
-    { id: 'streak', icon: '×5', name: 'Hot streak', desc: 'Reach a ×5 combo' },
+    { id: 'streak', icon: '×2', name: 'Hot streak', desc: '5 perfect hits in a row' },
+    { id: 'perfect10', icon: '×3', name: 'Laser focus', desc: '10 perfect hits in a row' },
+    { id: 'rage', icon: '!!', name: 'Seeing red', desc: 'Trigger Rage mode (20 perfect in a row)' },
+    { id: 'rageSurvive', icon: '♨', name: 'Rage tamed', desc: 'Survive the full 10 s of Rage mode' },
+    { id: 'bounce100', icon: '100', name: 'Rally master', desc: '100 bounces in one run' },
+    { id: 'survive60', icon: '60s', name: 'Still standing', desc: 'Survive 60 seconds in Classic or Survival' },
+    { id: 'survival120', icon: '2m', name: 'Iron will', desc: 'Last 2 minutes in Survival' },
+    { id: 'pure500', icon: '○5', name: 'No help needed', desc: 'Score 500 in Classic without collecting an orb' },
     { id: 'lvl5', icon: 'L5', name: 'Speed demon', desc: 'Reach level 5' },
     { id: 'lvl10', icon: 'L10', name: 'Lightspeed', desc: 'Reach level 10' },
-    { id: 's100', icon: '100', name: 'Century', desc: 'Score 100 in one run' },
-    { id: 's500', icon: '500', name: 'High roller', desc: 'Score 500 in one run' },
+    { id: 's100', icon: '1C', name: 'Century', desc: 'Score 100 in one run' },
+    { id: 's500', icon: '5C', name: 'High roller', desc: 'Score 500 in one run' },
+    { id: 'milestone1000', icon: '1K', name: 'Four digits', desc: 'Score 1,000 in one run' },
+    { id: 'boss', icon: '☠', name: 'Boss slayer', desc: 'Defeat a boss' },
+    { id: 'rush100', icon: '⏱', name: 'Rush hour', desc: '100 points in a 60-second rush' },
+    { id: 'chaos5', icon: '≈', name: 'Chaos theory', desc: 'Survive 5 events in one run' },
+    { id: 'secondwind', icon: '↺', name: 'Second wind', desc: 'Get a last chance' },
+    { id: 'clutch', icon: '⚡', name: 'Clutch', desc: 'Save the ball during danger slow-mo' },
     { id: 'circus', icon: '5●', name: 'Circus act', desc: 'Have 5 balls in play at once' },
     { id: 'saved', icon: '⌒', name: 'Close call', desc: 'Let a shield save a ball' },
     { id: 'collector', icon: '✦', name: 'Collector', desc: 'Collect 8 orbs in one run' },
     { id: 'pinball', icon: '⊙', name: 'Pinball wizard', desc: 'Hit bumpers 10 times in one run' },
     { id: 'tiny', icon: '▭', name: 'Tiny but mighty', desc: 'Make 5 bounces while shrunk' },
     { id: 'purist', icon: '○', name: 'Purist', desc: 'Reach level 4 without collecting an orb' },
+    { id: 'duel', icon: 'vs', name: 'Friendly rivals', desc: 'Finish a two-player match' },
   ];
+  const TITLES = [
+    { at: 0, name: 'Rookie' }, { at: 3, name: 'Rallier' }, { at: 7, name: 'Ace' },
+    { at: 12, name: 'Maestro' }, { at: 18, name: 'Legend' }, { at: BADGES.length, name: 'Bounce Royalty' },
+  ];
+  const titleFor = (n) => TITLES.filter((t) => n >= t.at).pop().name;
+
+  const PACKS = {
+    classic:  { name: 'Classic',  wave: 'triangle', base: 220, scale: [0, 2, 4, 7, 9], vol: 1, partial: 2 },
+    chiptune: { name: 'Chiptune', wave: 'square',   base: 330, scale: [0, 4, 7, 11, 14], vol: 0.42, partial: 0 },
+    soft:     { name: 'Soft',     wave: 'sine',     base: 196, scale: [0, 3, 5, 7, 10], vol: 1.25, partial: 4 },
+  };
 
   const LEVEL_TINTS = [C.paper, C.sand, C.rose, C.sage, C.mist].map((c, i) => mixRgb(hexRgb(C.paper), hexRgb(c), i ? 0.32 : 0));
+  const RAGE_TINT = mixRgb(hexRgb(C.paper), hexRgb(C.rust), 0.36);
+  const DUEL_TINT = mixRgb(hexRgb(C.paper), hexRgb(C.mist), 0.2);
 
-  // ---------------------------------------------------------------- DOM
+  // ================================================================ DOM
   const canvas = $('#game');
   const ctx = canvas.getContext('2d');
   const el = {
-    hud: $('#hud'), score: $('#hud-score'), level: $('#hud-level'), speed: $('#hud-speed'), best: $('#hud-best'),
-    combo: $('#hud-combo'), mult: $('#hud-mult'),
-    chips: Object.fromEntries([...document.querySelectorAll('.chip')].map((c) => [c.dataset.power, c])),
-    banner: $('#banner'), bannerNum: $('#banner-num'), bannerSub: $('#banner-sub'),
-    menu: $('#screen-menu'), pause: $('#screen-pause'), over: $('#screen-over'), records: $('#screen-records'),
-    menuBest: $('#menu-best'), menuBadges: $('#menu-badges'),
-    overScore: $('#over-score'), overBest: $('#over-best'), overLevel: $('#over-level'),
-    overHits: $('#over-hits'), overCombo: $('#over-combo'), overNew: $('#over-newbest'),
+    hud: $('#hud'),
+    s: [1, 2, 3].map((i) => ({ wrap: $('#s' + i), label: $('#s' + i + '-label'), value: $('#s' + i + '-value') })),
+    best: $('#hud-best'), bestLabel: $('#hud-best-label'),
+    ghost: $('#hud-ghost'), ghostValue: $('#hud-ghost-value'),
+    combo: $('#hud-combo'), mult: $('#hud-mult'), streak: $('#hud-streak'),
+    chips: Object.fromEntries($$('.chip').map((c) => [c.dataset.power, c])),
+    banner: $('#banner'), bannerKicker: $('#banner-kicker'), bannerNum: $('#banner-num'), bannerSub: $('#banner-sub'),
+    announce: $('#announce'),
+    eventBanner: $('#event-banner'), eventName: $('#event-name'), eventDesc: $('#event-desc'), eventKicker: $('#event-kicker'),
+    bossBar: $('#boss-bar'), bossName: $('#boss-name'),
+    menu: $('#screen-menu'), pause: $('#screen-pause'), over: $('#screen-over'), records: $('#screen-records'), settings: $('#screen-settings'),
+    menuTitle: $('#menu-title'), menuBadges: $('#menu-badges'),
+    pauseStats: $('#pause-stats'), pauseMode: $('#pause-mode'),
+    overEyebrow: $('#over-eyebrow'), overTitle: $('#over-title'), overScore: $('#over-score'), overUnit: $('#over-unit'),
+    overNew: $('#over-newbest'), overStats: $('#over-stats'),
     nameForm: $('#name-form'), nameInput: $('#name-input'), overRank: $('#over-rank'), rankLine: $('#rank-line'),
+    btnShare: $('#btn-share'),
     boardList: $('#board-list'), boardEmpty: $('#board-empty'), badgeGrid: $('#badge-grid'), badgeCount: $('#badge-count'),
-    orbGrid: $('#orb-grid'),
+    titleLine: $('#title-line'), orbGrid: $('#orb-grid'),
     toasts: $('#toasts'),
-    btnPause: $('#btn-pause'), btnMute: $('#btn-mute'),
+    btnPause: $('#btn-pause'), btnMute: $('#btn-mute'), btnSettings: $('#btn-settings'),
+    musicToggle: $('#music-toggle'),
   };
-  const bump = (node) => { node.classList.remove('bump'); void node.offsetWidth; node.classList.add('bump'); };
+  const restartAnim = (node, cls) => { node.classList.remove(cls); void node.offsetWidth; node.classList.add(cls); };
+  const bump = (node) => restartAnim(node, 'bump');
 
-  // ---------------------------------------------------------------- sound (Web Audio, synthesised)
+  // ================================================================ audio
   const Sfx = {
-    ac: null, master: null, muted: store.get('bib.muted', false),
+    ac: null, master: null, sfxGain: null, musicGain: null, noiseBuf: null,
+    muted: store.get('bib.muted', false),
+    pack: PACKS[store.get('bib.pack', 'classic')] ? store.get('bib.pack', 'classic') : 'classic',
     init() {
       if (this.ac) { if (this.ac.state === 'suspended') this.ac.resume(); return; }
       const AC = window.AudioContext || window.webkitAudioContext;
@@ -109,58 +188,87 @@
       this.master = this.ac.createGain();
       this.master.gain.value = this.muted ? 0 : 0.55;
       this.master.connect(this.ac.destination);
+      this.sfxGain = this.ac.createGain();
+      this.sfxGain.connect(this.master);
+      this.musicGain = this.ac.createGain();
+      this.musicGain.gain.value = Music.on ? 0.5 : 0;
+      this.musicGain.connect(this.master);
+      const len = this.ac.sampleRate;
+      this.noiseBuf = this.ac.createBuffer(1, len, this.ac.sampleRate);
+      const d = this.noiseBuf.getChannelData(0);
+      for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
     },
     setMuted(m) {
       this.muted = m;
       store.set('bib.muted', m);
       if (this.master) this.master.gain.setTargetAtTime(m ? 0 : 0.55, this.ac.currentTime, 0.02);
     },
-    tone(freq, dur, { type = 'sine', vol = 0.3, slide = 0, delay = 0, attack = 0.004 } = {}) {
+    get P() { return PACKS[this.pack]; },
+    tone(freq, dur, { type = 'sine', vol = 0.3, slide = 0, delay = 0, attack = 0.004, at = 0, out = null } = {}) {
       if (!this.ac || this.muted) return;
-      const t = this.ac.currentTime + delay;
+      const t = at || this.ac.currentTime + delay;
       const o = this.ac.createOscillator();
       const g = this.ac.createGain();
       o.type = type;
       o.frequency.setValueAtTime(freq, t);
       if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(20, slide), t + dur);
       g.gain.setValueAtTime(0.0001, t);
-      g.gain.exponentialRampToValueAtTime(vol, t + attack);
+      g.gain.exponentialRampToValueAtTime(Math.max(0.0002, vol), t + attack);
       g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-      o.connect(g).connect(this.master);
+      o.connect(g).connect(out || this.sfxGain);
       o.start(t);
       o.stop(t + dur + 0.03);
     },
-    noise(dur, vol, freq) {
+    noise(dur, vol, freq, { type = 'bandpass', at = 0, out = null, q = 0.8 } = {}) {
       if (!this.ac || this.muted) return;
-      const t = this.ac.currentTime;
-      const len = Math.floor(this.ac.sampleRate * dur);
-      const buf = this.ac.createBuffer(1, len, this.ac.sampleRate);
-      const d = buf.getChannelData(0);
-      for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+      const t = at || this.ac.currentTime;
       const src = this.ac.createBufferSource();
       const f = this.ac.createBiquadFilter();
       const g = this.ac.createGain();
-      src.buffer = buf; f.type = 'bandpass'; f.frequency.value = freq; f.Q.value = 0.8;
-      g.gain.value = vol;
-      src.connect(f).connect(g).connect(this.master);
-      src.start(t);
+      src.buffer = this.noiseBuf;
+      f.type = type; f.frequency.value = freq; f.Q.value = q;
+      g.gain.setValueAtTime(vol, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      src.connect(f).connect(g).connect(out || this.sfxGain);
+      src.start(t, Math.random() * 0.5);
+      src.stop(t + dur + 0.02);
     },
-    // Combo bounces climb a pentatonic scale, so a good streak plays a little melody.
-    bounce(step, perfect) {
-      const scale = [0, 2, 4, 7, 9];
-      const n = scale[step % 5] + 12 * Math.floor(step / 5);
-      const f = 220 * Math.pow(2, Math.min(n, 26) / 12);
-      this.tone(f, 0.18, { type: 'triangle', vol: 0.32 });
-      this.tone(f * 2, 0.07, { type: 'sine', vol: 0.1 });
-      if (perfect) this.tone(f * 3, 0.22, { type: 'sine', vol: 0.08, delay: 0.035 });
+    note(step, octave = 0) {
+      const P = this.P;
+      const n = P.scale[step % P.scale.length] + 12 * (Math.floor(step / P.scale.length) + octave);
+      return P.base * Math.pow(2, Math.min(n, 30) / 12);
     },
-    wall() { this.tone(160, 0.05, { type: 'square', vol: 0.04, slide: 100 }); },
-    bumper() { this.tone(320, 0.12, { type: 'square', vol: 0.07, slide: 760 }); this.tone(640, 0.08, { type: 'sine', vol: 0.08, delay: 0.02 }); },
-    pickup() { [0, 4, 7, 12].forEach((n, i) => this.tone(523 * Math.pow(2, n / 12), 0.16, { type: 'triangle', vol: 0.18, delay: i * 0.045 })); },
+    // Combo bounces climb the pack's scale, so a good streak plays a little melody.
+    bounce(step, perfect, tier) {
+      const P = this.P;
+      const f = this.note(step);
+      this.tone(f, P.wave === 'sine' ? 0.32 : 0.18, { type: P.wave, vol: 0.32 * P.vol });
+      if (P.partial) this.tone(f * P.partial, 0.07, { type: 'sine', vol: 0.1 });
+      if (perfect) this.tone(f * 1.5, 0.22, { type: 'sine', vol: 0.08 + tier * 0.03, delay: 0.035 });
+      if (tier >= 2) this.tone(f * 3, 0.15, { type: 'sine', vol: 0.05, delay: 0.07 });
+    },
+    wall() { this.tone(160, 0.05, { type: this.pack === 'soft' ? 'sine' : 'square', vol: 0.04, slide: 100 }); },
+    bumper() { this.tone(320, 0.12, { type: 'square', vol: 0.07 * this.P.vol, slide: 760 }); this.tone(640, 0.08, { type: 'sine', vol: 0.08, delay: 0.02 }); },
+    pickup() { [0, 2, 4, 5].forEach((s, i) => this.tone(this.note(s, 1), 0.16, { type: this.P.wave, vol: 0.16 * this.P.vol, delay: i * 0.045 })); },
     bad() { this.tone(420, 0.35, { type: 'sawtooth', vol: 0.08, slide: 140 }); this.tone(300, 0.35, { type: 'triangle', vol: 0.12, slide: 100, delay: 0.05 }); },
     shield() { this.tone(880, 0.2, { type: 'sine', vol: 0.15 }); this.tone(1320, 0.3, { type: 'sine', vol: 0.1, delay: 0.06 }); },
     shieldBreak() { this.noise(0.25, 0.3, 2400); this.tone(1200, 0.25, { type: 'triangle', vol: 0.15, slide: 400 }); },
-    level() { [0, 7, 12, 16].forEach((n, i) => this.tone(330 * Math.pow(2, n / 12), 0.28, { type: 'square', vol: 0.06, delay: i * 0.07 })); },
+    level() { [0, 3, 5, 7].forEach((s, i) => this.tone(this.note(s, 1), 0.28, { type: this.P.wave, vol: 0.1 * this.P.vol, delay: i * 0.07 })); },
+    tierUp(tier) { for (let i = 0; i < 3 + tier; i++) this.tone(this.note(i * 2, 1), 0.2, { type: this.P.wave, vol: 0.13 * this.P.vol, delay: i * 0.05 }); },
+    rage() { this.tone(110, 0.8, { type: 'sawtooth', vol: 0.18, slide: 220 }); this.noise(0.6, 0.35, 900); [0, 2, 4, 7].forEach((s, i) => this.tone(this.note(s, 1), 0.25, { type: 'square', vol: 0.06, delay: 0.2 + i * 0.06 })); },
+    victory() { [0, 2, 4, 5, 7, 9].forEach((s, i) => this.tone(this.note(s, 1), 0.3, { type: this.P.wave, vol: 0.14 * this.P.vol, delay: i * 0.06 })); },
+    milestone() { [0, 4, 7, 12, 16].forEach((n, i) => this.tone(523 * Math.pow(2, n / 12), 0.25, { type: 'triangle', vol: 0.12, delay: i * 0.05 })); this.noise(0.3, 0.12, 5000, { type: 'highpass' }); },
+    alarm() { [0, 1, 0, 1].forEach((k, i) => this.tone(k ? 660 : 880, 0.12, { type: 'square', vol: 0.05, delay: i * 0.14 })); },
+    bossRoar() { this.tone(90, 1.1, { type: 'sawtooth', vol: 0.2, slide: 45 }); this.noise(0.9, 0.25, 250); },
+    bossHit() { this.tone(140, 0.2, { type: 'sine', vol: 0.3, slide: 60 }); this.noise(0.12, 0.25, 600); },
+    bossDie() { this.noise(1.2, 0.4, 400); this.tone(200, 1.2, { type: 'sawtooth', vol: 0.15, slide: 30 }); this.victory(); },
+    spit() { this.tone(500, 0.15, { type: 'square', vol: 0.05, slide: 200 }); },
+    stun() { this.tone(220, 0.35, { type: 'square', vol: 0.08, slide: 90 }); this.noise(0.2, 0.2, 1500); },
+    warp() { this.tone(300, 0.3, { type: 'sine', vol: 0.12, slide: 1200 }); },
+    heartbeat() { this.tone(70, 0.12, { type: 'sine', vol: 0.35 }); this.tone(62, 0.14, { type: 'sine', vol: 0.3, delay: 0.16 }); },
+    whoosh() { this.noise(0.25, 0.15, 1200, { q: 2 }); },
+    tick(urgent) { this.tone(urgent ? 1400 : 1000, 0.04, { type: 'square', vol: 0.05 }); },
+    horn() { this.tone(330, 0.6, { type: 'square', vol: 0.08 }); this.tone(440, 0.6, { type: 'square', vol: 0.06, delay: 0.02 }); },
     badge() { this.tone(988, 0.12, { type: 'triangle', vol: 0.14 }); this.tone(1319, 0.3, { type: 'triangle', vol: 0.14, delay: 0.1 }); },
     ballLost() { this.tone(360, 0.3, { type: 'triangle', vol: 0.16, slide: 120 }); },
     lose() { this.tone(300, 0.9, { type: 'sawtooth', vol: 0.12, slide: 45 }); this.noise(0.5, 0.35, 300); },
@@ -168,48 +276,116 @@
     click() { this.tone(660, 0.05, { type: 'sine', vol: 0.12 }); },
   };
 
-  // ---------------------------------------------------------------- persistence: leaderboard & badges
-  const cleanName = (s) => String(s || '').replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim().slice(0, 12).trim();
-
-  const Board = {
-    list: (Array.isArray(store.get('bib.board', [])) ? store.get('bib.board', []) : [])
-      .filter((e) => e && typeof e.score === 'number' && isFinite(e.score))
-      .map((e) => ({ name: cleanName(e.name) || 'Player', score: Math.floor(e.score), level: Math.floor(e.level) || 1, date: +e.date || 0 }))
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 10),
-    qualifies(score) { return score > 0 && (this.list.length < 10 || score > this.list[this.list.length - 1].score); },
-    rankOf(score) { const i = this.list.findIndex((e) => score > e.score); return (i === -1 ? this.list.length : i) + 1; },
-    add(entry) {
-      this.list.push(entry);
-      this.list.sort((a, b) => b.score - a.score || a.date - b.date);
-      this.list = this.list.slice(0, 10);
-      store.set('bib.board', this.list);
-      return this.list.indexOf(entry) + 1;
+  // Procedural background music. Intensity: 0 off, 1 calm, 2 boss, 3 rage.
+  const Music = {
+    on: store.get('bib.music', true),
+    intensity: 0, step: 0, nextT: 0, timer: null,
+    CHORDS: [[57, 60, 64], [53, 57, 60], [60, 64, 67], [55, 59, 62]], // Am F C G (MIDI)
+    set(n) {
+      if (n === this.intensity) return;
+      this.intensity = n;
+      if (n > 0 && !this.timer && Sfx.ac) {
+        this.nextT = Sfx.ac.currentTime + 0.06;
+        this.timer = setInterval(() => this.tick(), 25);
+      } else if (n === 0 && this.timer) {
+        clearInterval(this.timer);
+        this.timer = null;
+      }
+    },
+    toggle(on) {
+      this.on = on;
+      store.set('bib.music', on);
+      if (Sfx.musicGain) Sfx.musicGain.gain.setTargetAtTime(on ? 0.5 : 0, Sfx.ac.currentTime, 0.05);
+    },
+    tick() {
+      const ac = Sfx.ac;
+      if (!ac || ac.state !== 'running' || !this.intensity) return;
+      const bpm = [0, 96, 116, 142][this.intensity];
+      const dur = 60 / bpm / 4;
+      if (this.nextT < ac.currentTime - 0.2) this.nextT = ac.currentTime + 0.02; // recovered from a stall
+      while (this.nextT < ac.currentTime + 0.12) {
+        if (this.on && !Sfx.muted) this.play(this.step, this.nextT, dur);
+        this.nextT += dur;
+        this.step = (this.step + 1) % 64;
+      }
+    },
+    play(s, t, d) {
+      const I = this.intensity;
+      const out = Sfx.musicGain;
+      const wave = Sfx.P.wave;
+      const chord = this.CHORDS[Math.floor(s / 16) % 4];
+      const mtof = (m) => 440 * Math.pow(2, (m - 69) / 12);
+      const beat = s % 16;
+      // bass
+      if (beat === 0 || beat === 8 || (I >= 2 && (beat === 6 || beat === 14)) || (I === 3 && beat % 2 === 0)) {
+        Sfx.tone(mtof(chord[0] - 24), d * (I === 3 ? 1.6 : 3.5), { type: I === 3 ? 'sawtooth' : 'triangle', vol: I === 3 ? 0.16 : 0.22, at: t, out });
+      }
+      // arpeggio
+      if (beat % 2 === 0 || I === 3) {
+        const n = chord[(s >> (I === 3 ? 0 : 1)) % 3] + (I >= 2 ? 12 : 0);
+        Sfx.tone(mtof(n), d * 1.8, { type: wave, vol: (I === 3 ? 0.06 : 0.07) * Sfx.P.vol, at: t, out });
+      }
+      // drums
+      if (I >= 2 && beat % 4 === 0) Sfx.tone(150, 0.18, { type: 'sine', vol: 0.4, slide: 40, at: t, out });
+      if (I === 3 && beat % 2 === 1) Sfx.noise(0.04, 0.08, 7000, { type: 'highpass', at: t, out });
+      if (I === 3 && (beat === 4 || beat === 12)) Sfx.noise(0.14, 0.22, 1800, { at: t, out });
     },
   };
 
+  // ================================================================ persistence: boards, bests, badges, ghosts
+  const cleanName = (s) => String(s || '').replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim().slice(0, 12).trim();
+  const boardKey = (m) => (m === 'classic' ? 'bib.board' : 'bib.board.' + m);
+  const bestKey = (m) => (m === 'classic' ? 'bib.best' : 'bib.best.' + m);
+  function loadBoard(mode) {
+    const raw = store.get(boardKey(mode), []);
+    return (Array.isArray(raw) ? raw : [])
+      .filter((e) => e && typeof e.score === 'number' && isFinite(e.score))
+      .map((e) => ({ name: cleanName(e.name) || 'Player', score: +e.score, level: Math.floor(e.level) || 1, title: typeof e.title === 'string' ? e.title.slice(0, 24) : '', date: +e.date || 0 }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 10);
+  }
+  const Boards = { classic: loadBoard('classic'), survival: loadBoard('survival'), rush: loadBoard('rush') };
+  const bests = {};
+  for (const m of Object.keys(Boards)) bests[m] = Math.max(+store.get(bestKey(m), 0) || 0, Boards[m][0] ? Boards[m][0].score : 0);
+  const qualifies = (m, score) => !!Boards[m] && score > 0 && (Boards[m].length < 10 || score > Boards[m][Boards[m].length - 1].score);
+  const rankOf = (m, score) => { const i = Boards[m].findIndex((e) => score > e.score); return (i === -1 ? Boards[m].length : i) + 1; };
+  function addEntry(m, entry) {
+    const l = Boards[m];
+    l.push(entry);
+    l.sort((a, b) => b.score - a.score || a.date - b.date);
+    Boards[m] = l.slice(0, 10);
+    store.set(boardKey(m), Boards[m]);
+    return Boards[m].indexOf(entry) + 1;
+  }
+  const fmtScore = (m, v) => (m === 'survival' ? fmtTime(v) : String(v));
+
   const earned = new Set((store.get('bib.badges', []) || []).filter((id) => BADGES.some((b) => b.id === id)));
+  const currentTitle = () => titleFor(earned.size);
   const toastQueue = [];
   function unlock(id) {
     if (earned.has(id) || G.state === 'menu') return;
+    const before = currentTitle();
     earned.add(id);
     store.set('bib.badges', [...earned]);
     const badge = BADGES.find((b) => b.id === id);
-    if (badge) { toastQueue.push(badge); if (toastQueue.length === 1) showToast(); }
+    if (badge) queueToast({ icon: badge.icon, kicker: 'Badge unlocked', name: badge.name });
+    const after = currentTitle();
+    if (after !== before) queueToast({ icon: '★', kicker: 'New title', name: after });
   }
+  function queueToast(t) { toastQueue.push(t); if (toastQueue.length === 1) showToast(); }
   function showToast() {
-    const badge = toastQueue[0];
-    if (!badge) return;
+    const data = toastQueue[0];
+    if (!data) return;
     const t = document.createElement('div');
     t.className = 'toast';
     const medal = document.createElement('span');
     medal.className = 'medal';
-    medal.textContent = badge.icon;
+    medal.textContent = data.icon;
     const txt = document.createElement('div');
     const k = document.createElement('small');
-    k.textContent = 'Badge unlocked';
+    k.textContent = data.kicker;
     const b = document.createElement('b');
-    b.textContent = badge.name;
+    b.textContent = data.name;
     txt.append(k, b);
     t.append(medal, txt);
     el.toasts.append(t);
@@ -218,7 +394,7 @@
     setTimeout(() => { t.remove(); toastQueue.shift(); showToast(); }, 2700);
   }
 
-  // ---------------------------------------------------------------- layout
+  // ================================================================ layout
   let W = 0, H = 0, DPR = 1;
   const M = {}; // metrics derived from the viewport
 
@@ -241,56 +417,90 @@
     document.documentElement.style.setProperty('--hud-top', (M.inset + M.padH + 14) + 'px');
     document.documentElement.style.setProperty('--hud-bottom', (M.inset + M.padH + 18) + 'px');
 
-    if (!pad.w) pad.w = M.basePadW;
-    pad.x = clamp(pad.x || W / 2, pad.w / 2, W - pad.w / 2);
-    if (targetX !== null) targetX = clamp(targetX, 0, W);
+    for (const p of padList()) {
+      if (!p.w) p.w = M.basePadW;
+      p.x = clamp(p.x || W / 2, p.w / 2, W - p.w / 2);
+      if (p.targetX !== null) p.targetX = clamp(p.targetX, 0, W);
+    }
     for (const b of balls) { b.r = M.ballR; b.x = clamp(b.x, b.r, W - b.r); b.y = clamp(b.y, M.topY, M.botY); }
     for (const t of targets) { t.r = M.ballR * 2.6; t.x = clamp(t.x, t.r, W - t.r); t.y = clamp(t.y, H * 0.25, H * 0.75); }
     for (const u of bumpers) { u.r = M.ballR * 3.2; u.y = u.yFrac * H; u.x = clamp(u.x, u.r + 10, W - u.r - 10); }
+    if (G.boss) { G.boss.r = bossRadius(); }
   }
 
-  // ---------------------------------------------------------------- state
+  // ================================================================ state
   const G = {
     state: 'menu',            // menu | playing | paused | dying | over
-    score: 0, hits: 0, level: 1, streak: 0, mult: 1, bestMult: 1,
-    best: Math.max(store.get('bib.best', 0), Board.list.length ? Board.list[0].score : 0),
-    time: 0,
-    timeScale: 1, hitStop: 0,
+    mode: validMode(store.get('bib.mode', 'classic')),
+    score: 0, hits: 0, level: 1, levelHits: 0, streak: 0, mult: 1, bestStreak: 0,
+    elapsed: 0, timeLeft: RUSH_TIME, topSpeed: 1,
+    time: 0, timeScale: 1, hitStop: 0,
     trauma: 0, flash: 0, flashColor: C.rust,
     fx: { wide: 0, slow: 0, magnet: 0, double: 0, shrink: 0 },
-    shield: 0,
-    spawnT: 4,
-    deathT: 0, focusX: 0, focusY: 0, zoom: 1,
-    scorePop: 0, shownScore: 0, bannerT: 0,
-    newBest: false,
-    run: { orbs: 0, bumps: 0, shrinkHits: 0 },
+    shield: 0, spawnT: 4,
+    event: null, eventT: 14, lastEvent: '',
+    boss: null, bossDelay: 0, projectiles: [], blocks: [],
+    rageT: 0,
+    deathT: 0, focusX: 0, focusY: 0, zoom: 1, ending: 'miss', winner: '',
+    scorePop: 0, shownScore: 0, bannerT: 0, newBest: false,
+    run: null,
+    lastChanceAvail: false, milestoneIdx: 0,
+    dangerSlow: false,
+    p1: 0, p2: 0, rally: 0, longestRally: 0,
+    timeline: [], tlNext: 1, ghost: null,
+    nearMarks: [],
     bg: LEVEL_TINTS[0].slice(),
-    pending: false, lastEntry: null, recordsFrom: 'menu',
+    pending: false, pendingValue: 0, lastEntry: null, lastEntryMode: '', recordsFrom: 'menu', boardMode: 'classic',
+    lastTick: 99,
   };
-  const pad = { x: 0, vx: 0, w: 0, tw: 0, tilt: 0, top: { flash: 0, bump: 0 }, bot: { flash: 0, bump: 0 } };
+  const newRun = () => ({ orbs: 0, bumps: 0, shrinkHits: 0, perfects: 0, events: 0, rages: 0, bosses: 0, lastChance: false });
+  G.run = newRun();
+
+  const makePad = () => ({ x: 0, vx: 0, w: 0, tw: 0, tilt: 0, flash: 0, bump: 0, targetX: null, stun: 0 });
+  const pads = { top: makePad(), bot: makePad() };
+  function padList() { return [pads.top, pads.bot]; }
   let balls = [];
   let targets = [];
   let bumpers = [];
   let particles = [];
   let rings = [];
   let popups = [];
-  let targetX = null;
-  const keys = { left: false, right: false };
+  const keys = { a: false, d: false, left: false, right: false };
 
-  // ---------------------------------------------------------------- entities
-  function curSpeed() {
-    const k = SPEED_START + (G.level - 1) * SPEED_PER_LEVEL + (G.hits % LEVEL_HITS) * 0.01;
-    return M.baseSpeed * Math.min(SPEED_MAX, k);
+  const single = () => G.mode !== 'duel';
+  const has = {
+    orbs: () => G.mode === 'classic' || G.mode === 'rush',
+    events: () => (G.mode === 'classic' && G.level >= 2) || (G.mode === 'rush' && G.elapsed > 12),
+    lastChance: () => G.mode === 'classic' || G.mode === 'survival',
+  };
+  const evOn = (type) => !!(G.event && G.event.type === type && G.event.t >= EVENT_WARN);
+
+  // ================================================================ speed
+  function speedK() {
+    let k;
+    switch (G.mode) {
+      case 'survival': k = Math.min(3.2, 0.72 + G.elapsed * 0.012); break;
+      case 'rush': k = Math.min(2.2, 0.8 + G.elapsed * 0.012); break;
+      case 'duel': k = Math.min(2.2, 0.8 + G.rally * 0.05); break;
+      default: k = Math.min(2.5, SPEED_START + (G.level - 1) * SPEED_PER_LEVEL + G.levelHits * 0.01);
+    }
+    if (G.state === 'menu') k = SPEED_START;
+    if (G.rageT > 0) k *= 1.35;
+    if (evOn('chaos')) k *= 1.45;
+    return k;
   }
-  const speedLabel = () => (curSpeed() / (M.baseSpeed * SPEED_START)).toFixed(1) + '×';
+  const curSpeed = () => M.baseSpeed * speedK();
+  const speedRatio = () => speedK() / SPEED_START;
+  const speedLabel = () => speedRatio().toFixed(1) + '×';
 
+  // ================================================================ entities
   function makeBall(x, y, angle, dir, speed) {
     const s = speed || curSpeed();
     return {
       x, y, r: M.ballR,
       vx: s * Math.sin(angle), vy: dir * s * Math.cos(angle),
-      trail: [], sq: 0, sqv: 0,
-      serve: 0, grow: 0,
+      trail: [], sq: 0, sqv: 0, serve: 0, serveMax: 0, grow: 0,
+      passed: false, danger: false,
     };
   }
 
@@ -303,18 +513,28 @@
     }
   }
 
+  function serveBall(dir = 1, wait = 0.65) {
+    const b = makeBall(W / 2, H / 2, rand(-0.45, 0.45), dir);
+    b.serve = wait; b.serveMax = wait; // hovers while it grows in, then launches
+    return b;
+  }
+
   function spawnTarget() {
-    const pool = Object.entries(ORBS).filter(([k, o]) => o.min <= G.level && !(k === 'shield' && G.shield >= 2));
-    let pick = Math.random() * pool.reduce((s, [, o]) => s + o.w, 0);
+    const lvl = G.mode === 'rush' ? 4 : G.level;
+    const pool = Object.entries(ORBS).filter(([k, o]) => o.min <= lvl && !(k === 'shield' && G.shield >= 2));
+    let r0 = Math.random() * pool.reduce((s, [, o]) => s + o.w, 0);
     let type = pool[0][0];
-    for (const [k, o] of pool) { pick -= o.w; if (pick <= 0) { type = k; break; } }
+    for (const [k, o] of pool) { r0 -= o.w; if (r0 <= 0) { type = k; break; } }
     const r = M.ballR * 2.6;
     let x, y, tries = 0;
+    const blocked = (x, y) => targets.some((t) => Math.hypot(t.x - x, t.y - y) < r * 4)
+      || (!G.boss && bumpers.some((u) => Math.abs(u.y - y) < u.r + r * 1.5))
+      || (G.boss && Math.hypot(G.boss.x - x, G.boss.y - y) < G.boss.r + r * 3);
     do {
       x = rand(Math.max(r + 12, W * 0.12), Math.min(W - r - 12, W * 0.88));
-      y = rand(H * 0.3, H * 0.7);
+      y = rand(H * 0.28, H * 0.72);
       tries++;
-    } while (tries < 10 && (targets.some((t) => Math.hypot(t.x - x, t.y - y) < r * 4) || bumpers.some((u) => Math.abs(u.y - y) < u.r + r * 1.5)));
+    } while (tries < 14 && blocked(x, y));
     targets.push({ x, y, r, type, def: ORBS[type], age: 0, life: ORBS[type].bad ? 7 : 9, phase: Math.random() * 6.28 });
   }
 
@@ -323,18 +543,15 @@
     while (bumpers.length < want) {
       const i = bumpers.length;
       const r = M.ballR * 3.2;
-      const yFrac = i ? 0.64 : 0.4;
-      bumpers.push({
-        x: rand(W * 0.25, W * 0.75), y: yFrac * H, yFrac, r,
-        vx: (Math.random() < 0.5 ? -1 : 1) * rand(45, 75), age: 0, hit: 0,
-      });
+      const yFrac = i ? 0.64 : 0.36;
+      bumpers.push({ x: rand(W * 0.25, W * 0.75), y: yFrac * H, yFrac, r, vx: (Math.random() < 0.5 ? -1 : 1) * 60, age: 0, hit: 0 });
       ring(bumpers[i].x, bumpers[i].y, r * 4, C.ink, 3, 0.6);
     }
     for (const u of bumpers) u.vx = Math.sign(u.vx) * Math.min(160, 55 + (G.level - 3) * 12);
   }
 
-  // ---------------------------------------------------------------- effects
-  const MAX_PARTICLES = 700;
+  // ================================================================ effects
+  const MAX_PARTICLES = 800;
   function emit(x, y, n, opts = {}) {
     const count = Math.round(n * (reduced ? 0.5 : 1));
     const {
@@ -354,57 +571,77 @@
     }
     if (particles.length > MAX_PARTICLES) particles.splice(0, particles.length - MAX_PARTICLES);
   }
-  function ring(x, y, max, color = C.rust, width = 3, life = 0.45) {
-    rings.push({ x, y, max, color, width, life, t: 0 });
+  function confetti(n = 6) {
+    for (let i = 0; i < n; i++) {
+      emit(W * ((i + 0.5) / n), -10, 20, {
+        angle: Math.PI / 2, spread: 1.2, speed: [80, 360], gravity: 260, drag: 0.6,
+        life: [1.6, 2.8], size: [3, 6], spark: 0, colors: [C.rust, C.sage, C.rose, C.sand, C.slate, C.gold],
+      });
+    }
   }
+  function ring(x, y, max, color = C.rust, width = 3, life = 0.45) { rings.push({ x, y, max, color, width, life, t: 0 }); }
   function popup(x, y, text, { size = 26, color = C.ink, life = 0.9, font = FONT_SANS, weight = 800, italic = false } = {}) {
     popups.push({ x: clamp(x, 40, W - 40), y: clamp(y, M.inset + 100, H - M.inset - 50), text, size, color, life, t: 0, font, weight, italic });
   }
   function shake(amount) { G.trauma = Math.min(1, G.trauma + amount); }
   function flash(alpha, color) { G.flash = Math.max(G.flash, alpha); G.flashColor = color; }
+  function announce(text, kind = 'tier') {
+    el.announce.textContent = text;
+    el.announce.className = 'announce ' + kind;
+    restartAnim(el.announce, 'show');
+  }
 
-  // ---------------------------------------------------------------- game flow
+  // ================================================================ game flow
   function setScreen(name) {
-    for (const s of [el.menu, el.pause, el.over, el.records]) s.classList.remove('show');
+    for (const s of [el.menu, el.pause, el.over, el.records, el.settings]) s.classList.remove('show');
     if (name) el[name].classList.add('show');
     document.body.classList.toggle('ui-open', !!name);
     el.btnPause.hidden = G.state !== 'playing';
   }
 
-  function serveBall(dir = 1) {
-    const b = makeBall(W / 2, H / 2, rand(-0.45, 0.45), dir);
-    b.serve = 0.65; // hovers while it grows in, then launches
-    return b;
-  }
-
   function resetRun() {
     Object.assign(G, {
-      score: 0, hits: 0, level: 1, streak: 0, mult: 1, bestMult: 1,
-      timeScale: 1, hitStop: 0, shield: 0, spawnT: 4, deathT: 0, zoom: 1,
+      score: 0, hits: 0, level: 1, levelHits: 0, streak: 0, mult: 1, bestStreak: 0,
+      elapsed: 0, timeLeft: RUSH_TIME, topSpeed: 1,
+      timeScale: 1, hitStop: 0, shield: 0, spawnT: G.mode === 'rush' ? 2 : 4, deathT: 0, zoom: 1,
+      event: null, eventT: rand(14, 20), lastEvent: '',
+      boss: null, bossDelay: 0, projectiles: [], blocks: [],
+      rageT: 0, ending: 'miss', winner: '',
       shownScore: 0, newBest: false, flash: 0, bannerT: 0,
-      run: { orbs: 0, bumps: 0, shrinkHits: 0 },
+      lastChanceAvail: Math.random() < 0.5, milestoneIdx: 0, dangerSlow: false,
+      p1: 0, p2: 0, rally: 0, longestRally: 0,
+      timeline: [], tlNext: 1, nearMarks: [], lastTick: 99,
+      ghost: (G.mode === 'classic' || G.mode === 'rush') ? store.get('bib.ghost.' + G.mode, null) : null,
+      run: newRun(),
     });
+    if (!Array.isArray(G.ghost)) G.ghost = null;
     for (const k of TIMED) G.fx[k] = 0;
+    for (const p of padList()) { p.stun = 0; p.targetX = null; }
     targets = [];
     bumpers = [];
     popups = [];
+    el.bossBar.hidden = true;
+    el.eventBanner.hidden = true;
   }
 
-  function startGame() {
+  function startGame(mode) {
     commitPending();
+    if (mode) { G.mode = validMode(mode); store.set('bib.mode', G.mode); }
     Sfx.init();
     Sfx.click();
     resetRun();
     G.state = 'playing';
-    balls = [serveBall(1)];
+    balls = [serveBall(1, G.mode === 'duel' ? 1.1 : 0.65)];
     el.hud.hidden = false;
-    updateHud(true);
+    el.hud.dataset.mode = G.mode;
+    updateHud();
     setScreen(null);
   }
 
   function pauseGame() {
     if (G.state !== 'playing') return;
     G.state = 'paused';
+    fillPauseStats();
     setScreen('pause');
     $('#btn-resume').focus({ preventScroll: true });
   }
@@ -421,105 +658,196 @@
     el.hud.hidden = true;
     resetRun();
     balls = [serveBall(1)];
-    el.menuBest.textContent = G.best;
-    el.menuBadges.textContent = `${earned.size}/${BADGES.length}`;
+    refreshMenu();
     setScreen('menu');
     $('#btn-play').focus({ preventScroll: true });
+  }
+
+  function refreshMenu() {
+    el.menuTitle.textContent = currentTitle();
+    el.menuBadges.textContent = `${earned.size}/${BADGES.length}`;
+    for (const b of $$('.mode')) {
+      const m = b.dataset.mode;
+      b.setAttribute('aria-checked', String(m === G.mode));
+      b.tabIndex = m === G.mode ? 0 : -1;
+      const best = b.querySelector('.mode-best');
+      if (best) best.textContent = m === 'duel' ? 'Local, 2 players' : bests[m] ? 'Best ' + fmtScore(m, bests[m]) : 'No score yet';
+    }
+    setText($('#btn-play-label'), 'Play ' + MODES[G.mode].name);
   }
 
   function levelUp() {
     G.level++;
     G.bannerT = 1.5;
+    const boss = G.level % 5 === 0;
+    el.bannerKicker.textContent = 'Level';
     el.bannerNum.textContent = G.level;
-    el.bannerSub.textContent = UNLOCKS[G.level] || 'speed ' + speedLabel();
-    el.banner.classList.remove('show'); void el.banner.offsetWidth; el.banner.classList.add('show');
-    // Speed every ball up right away so each level feels faster.
-    const s = curSpeed();
-    for (const b of balls) { const k = s / (Math.hypot(b.vx, b.vy) || 1); b.vx *= k; b.vy *= k; }
+    el.bannerSub.textContent = boss ? 'boss incoming!' : UNLOCKS[G.level] || 'speed ' + speedLabel();
+    restartAnim(el.banner, 'show');
     syncBumpers();
     Sfx.level();
     flash(0.18, C.sage);
     ring(W / 2, H / 2, Math.max(W, H) * 0.7, C.sage, 6, 0.9);
-    bump(el.level);
-    bump(el.speed);
+    bump(el.s[1].value);
+    bump(el.s[2].value);
+    if (boss) G.bossDelay = 1.8;
     if (G.level >= 5) unlock('lvl5');
     if (G.level >= 10) unlock('lvl10');
     if (G.level >= 4 && G.run.orbs === 0) unlock('purist');
   }
 
-  // Returns the points actually awarded (Double doubles everything).
-  function addScore(n) {
-    const pts = n * (G.fx.double > 0 ? 2 : 1);
+  // Returns the points actually awarded. Double (orb or event) ×2, Rage ×3.
+  function addScore(n, raw = false) {
+    if (G.mode === 'duel') return 0;
+    const pts = raw ? n : n * (G.fx.double > 0 ? 2 : 1) * (G.rageT > 0 ? 3 : 1);
     G.score += pts;
     G.scorePop = 1;
-    bump(el.score);
-    if (G.score > G.best && !G.newBest && G.best > 0) {
+    if (G.mode !== 'survival') bump(el.s[0].value);
+    const best = bests[G.mode] || 0;
+    if (G.mode !== 'survival' && G.score > best && !G.newBest && best > 0) {
       G.newBest = true;
-      popup(W / 2, H * 0.4, 'new best!', { size: 34, color: C.rust, font: FONT_SERIF, weight: 400, italic: true, life: 1.4 });
+      popup(W / 2, H * 0.4, 'new personal best!', { size: 32, color: C.rust, font: FONT_SERIF, weight: 400, italic: true, life: 1.4 });
+      Sfx.milestone();
     }
+    while (G.milestoneIdx < MILESTONES.length && G.score >= MILESTONES[G.milestoneIdx]) celebrate(MILESTONES[G.milestoneIdx++]);
     if (G.score >= 100) unlock('s100');
     if (G.score >= 500) unlock('s500');
+    if (G.score >= 1000) unlock('milestone1000');
+    if (G.mode === 'classic' && G.score >= 500 && G.run.orbs === 0) unlock('pure500');
+    if (G.mode === 'rush' && G.score >= 100) unlock('rush100');
     return pts;
   }
 
-  function updateHud(force) {
-    el.score.textContent = G.score;
-    el.level.textContent = G.level;
-    el.speed.textContent = speedLabel();
-    el.best.textContent = Math.max(G.best, G.score);
-    el.combo.hidden = G.mult < 2;
-    if (force) el.mult.textContent = G.mult;
+  function celebrate(n) {
+    announce(n.toLocaleString() + '!', 'milestone');
+    confetti(n >= 1000 ? 8 : 5);
+    for (let i = 0; i < 3; i++) ring(W / 2, H / 2, Math.max(W, H) * (0.3 + i * 0.2), [C.gold, C.rust, C.sage][i], 6 - i, 0.7 + i * 0.2);
+    flash(0.2, C.sand);
+    shake(0.3);
+    Sfx.milestone();
   }
 
+  // ================================================================ HUD
+  function updateHud() {
+    const m = G.mode;
+    const S = el.s;
+    const set = (i, label, value) => { setText(S[i].label, label); setText(S[i].value, value); };
+    if (m === 'classic') { set(0, 'Score', String(G.score)); set(1, 'Level', String(G.level)); set(2, 'Speed', speedLabel()); }
+    else if (m === 'survival') { set(0, 'Time', fmtTime(G.elapsed)); set(1, 'Bounces', String(G.hits)); set(2, 'Speed', speedLabel()); }
+    else if (m === 'rush') { set(0, 'Score', String(G.score)); set(1, 'Time', fmtClock(G.timeLeft)); set(2, 'Speed', speedLabel()); }
+    S[1].wrap.classList.toggle('urgent', m === 'rush' && G.timeLeft <= 10);
+
+    if (m !== 'duel') {
+      setText(el.best, fmtScore(m, Math.max(bests[m] || 0, m === 'survival' ? 0 : G.score)));
+      // Personal-best ghost: how far ahead or behind your best run you are at this moment.
+      let ghostTxt = '';
+      let ahead = true;
+      if (m === 'survival' && bests.survival > 0) {
+        const diff = G.elapsed - bests.survival;
+        ahead = diff >= 0;
+        ghostTxt = (ahead ? '+' : '−') + fmtTime(Math.abs(diff));
+      } else if (G.ghost && G.ghost.length) {
+        const g = G.ghost[Math.min(Math.floor(G.elapsed), G.ghost.length - 1)];
+        const diff = G.score - g;
+        ahead = diff >= 0;
+        ghostTxt = (ahead ? '+' : '−') + Math.abs(diff);
+      }
+      if (el.ghost.hidden === !!ghostTxt) el.ghost.hidden = !ghostTxt;
+      if (ghostTxt) { setText(el.ghostValue, ghostTxt); el.ghost.classList.toggle('ahead', ahead); }
+    }
+
+    const showCombo = single() && G.streak >= 2;
+    if (el.combo.hidden === showCombo) el.combo.hidden = !showCombo;
+    if (showCombo) {
+      setText(el.mult, '×' + G.mult);
+      setText(el.streak, G.streak + ' perfect');
+      const ti = tierIdx(G.streak);
+      let p;
+      if (ti < TIERS.length) { const lo = ti ? TIERS[ti - 1].at : 0; p = (G.streak - lo) / (TIERS[ti].at - lo); }
+      else p = ((G.streak - 20) % 10) / 10; // progress toward the next Rage at 30, 40…
+      el.combo.style.setProperty('--p', p.toFixed(3));
+      const tierName = G.rageT > 0 ? 'rage' : String(ti);
+      if (el.combo.dataset.tier !== tierName) el.combo.dataset.tier = tierName;
+    }
+  }
+
+  // ================================================================ collisions & scoring
   // Paddle contact: the hit position decides the bounce angle, so players can aim.
   function hitPaddle(b, which) {
     const isBot = which === 'bot';
-    const p = isBot ? pad.bot : pad.top;
-    const offset = clamp((b.x - pad.x) / (pad.w / 2), -1, 1);
-    const angle = clamp(offset * 1.05 + pad.vx * 0.00006, -1.15, 1.15);
+    const p = pads[which];
+    const offset = clamp((b.x - p.x) / (p.w / 2), -1, 1);
+    const angle = clamp(offset * 1.05 + p.vx * 0.00006, -1.15, 1.15);
+    const playing = G.state === 'playing';
+    if (playing && G.mode === 'duel') { G.rally++; G.longestRally = Math.max(G.longestRally, G.rally); }
     const speed = curSpeed();
     b.vx = speed * Math.sin(angle);
     b.vy = (isBot ? -1 : 1) * speed * Math.cos(angle);
     b.y = isBot ? M.botY - b.r : M.topY + M.padH + b.r;
     b.sq = 0.85; b.sqv = 0;
+    b.passed = false;
 
     const perfect = Math.abs(offset) < 0.22;
-    const playing = G.state === 'playing';
     p.flash = 1;
     p.bump = 1;
 
     const dirY = isBot ? -Math.PI / 2 : Math.PI / 2;
     const cy = isBot ? M.botY : M.topY + M.padH;
+    let tier = 0;
 
-    if (playing) {
+    if (playing && G.mode === 'duel') {
+      G.hits++;
+      Sfx.bounce(G.rally % 10, perfect, 0);
+    } else if (playing) {
       G.hits++;
       const prevStreak = G.streak;
-      G.streak = perfect ? G.streak + 1 : 0;
-      G.mult = Math.min(5, 1 + G.streak);
-      G.bestMult = Math.max(G.bestMult, G.mult);
-      if (G.mult >= 2) { el.mult.textContent = G.mult; bump(el.combo); }
-      if (!perfect && prevStreak >= 2) popup(b.x, cy + (isBot ? -60 : 60), 'combo lost', { size: 18, color: C.slate, font: FONT_MONO, weight: 400, life: 0.8 });
+      const prevMult = G.mult;
+      if (perfect) { G.streak++; G.run.perfects++; } else G.streak = 0;
+      G.bestStreak = Math.max(G.bestStreak, G.streak);
+      G.mult = tierMult(G.streak);
+      tier = tierIdx(G.streak);
+      if (!perfect && prevStreak >= 3) popup(b.x, cy + (isBot ? -60 : 60), 'combo lost', { size: 18, color: C.slate, font: FONT_MONO, weight: 400, life: 0.8 });
+
+      // Combo announcer and tier rewards
+      if (G.mult > prevMult) {
+        const t = TIERS[tier - 1];
+        if (t.at !== 20) announce(t.word, 'tier t' + tier);
+        Sfx.tierUp(tier);
+        flash(0.12 + tier * 0.04, TIER_COLORS[tier]);
+        shake(0.25 + tier * 0.1);
+        ring(b.x, cy, 160 + tier * 40, TIER_COLORS[tier], 6, 0.7);
+      } else if (perfect && G.streak === 15) announce('LEGENDARY!', 'tier t3');
+      else if (perfect && G.streak === 3) announce('GREAT!', 'tier t0');
+      if (perfect && G.streak >= 20 && (G.streak - 20) % 10 === 0) startRage();
+
       const pts = addScore(G.mult);
-      const dbl = G.fx.double > 0;
-      popup(b.x, cy + (isBot ? -28 : 28), '+' + pts, { size: 22 + G.mult * 5 + (dbl ? 6 : 0), color: perfect || dbl ? C.rust : C.ink });
-      if (perfect) popup(b.x, cy + (isBot ? -64 : 64), G.mult >= 2 ? 'perfect ×' + G.mult : 'perfect', { size: 24, color: C.rust, font: FONT_SERIF, weight: 400, italic: true, life: 0.8 });
+      popup(b.x, cy + (isBot ? -28 : 28), '+' + pts, { size: 22 + Math.min(G.mult, 5) * 4 + (G.rageT > 0 ? 8 : 0), color: perfect || G.rageT > 0 ? C.rust : C.ink });
+      if (perfect) popup(b.x, cy + (isBot ? -64 : 64), G.streak >= 2 ? 'perfect ×' + G.streak : 'PERFECT!', { size: 24, color: TIER_COLORS[tier], font: FONT_SERIF, weight: 400, italic: true, life: 0.8 });
+      if (b.danger) {
+        popup(b.x, cy + (isBot ? -100 : 100), 'CLUTCH SAVE!', { size: 30, color: C.slate, life: 1.1 });
+        unlock('clutch');
+      }
+
       if (perfect) unlock('bullseye');
-      if (G.mult >= 5) unlock('streak');
+      if (G.streak >= 5) unlock('streak');
+      if (G.streak >= 10) unlock('perfect10');
+      if (G.hits >= 100) unlock('bounce100');
       if (G.fx.shrink > 0 && ++G.run.shrinkHits >= 5) unlock('tiny');
-      if (G.hits % LEVEL_HITS === 0) levelUp();
+      if (G.mode === 'classic' && !G.boss && G.bossDelay <= 0 && ++G.levelHits >= LEVEL_HITS) { G.levelHits = 0; levelUp(); }
       updateHud();
-      Sfx.bounce(G.streak + Math.min(G.level - 1, 5), perfect);
+      Sfx.bounce(G.streak + Math.min(G.level - 1, 5), perfect, tier);
     }
+    b.danger = false;
 
     const power = playing ? 1 : 0.5;
-    emit(b.x, cy, (perfect ? 26 : 14) * power + G.mult * 3, {
-      angle: dirY, spread: Math.PI * 0.9, speed: [120, perfect ? 520 : 380],
-      colors: perfect ? [C.rust, C.rust, C.sand, C.ink] : [C.ink, C.rust, C.sand],
+    emit(b.x, cy, ((perfect ? 26 : 14) + tier * 8) * power + G.mult * 2, {
+      angle: dirY, spread: Math.PI * 0.9, speed: [120, (perfect ? 520 : 380) + tier * 60],
+      colors: perfect ? [TIER_COLORS[tier], C.rust, C.sand, C.ink] : [C.ink, C.rust, C.sand],
     });
-    ring(b.x, cy, perfect ? 90 : 55, perfect ? C.rust : C.ink, perfect ? 4 : 2.5);
+    ring(b.x, cy, perfect ? 90 + tier * 20 : 55, perfect ? TIER_COLORS[tier] : C.ink, perfect ? 4 : 2.5);
     if (playing) {
-      shake(perfect ? 0.32 : 0.18);
-      if (perfect) { G.hitStop = 0.045; flash(0.08, C.rust); }
+      shake(perfect ? 0.28 + tier * 0.07 : 0.16);
+      if (perfect) { G.hitStop = 0.045; flash(0.08 + tier * 0.03, TIER_COLORS[tier]); }
     }
   }
 
@@ -564,7 +892,7 @@
       case 'shrink': G.fx.shrink = ORBS.shrink.dur; G.fx.wide = 0; G.run.shrinkHits = 0; label('shrunk!', C.rust); break;
       case 'slow': G.fx.slow = ORBS.slow.dur; flash(0.15, C.slate); label('slow-mo', C.slate); break;
       case 'magnet': G.fx.magnet = ORBS.magnet.dur; label('magnet'); break;
-      case 'double': G.fx.double = ORBS.double.dur; flash(0.12, C.ember); label('double points', C.rust); break;
+      case 'double': G.fx.double = Math.max(G.fx.double, ORBS.double.dur); flash(0.12, C.ember); label('double points', C.rust); break;
       case 'shield':
         G.shield = Math.min(2, G.shield + 1);
         Sfx.shield();
@@ -591,6 +919,7 @@
     G.shield--;
     b.vy = edge > 0 ? -Math.abs(b.vy) : Math.abs(b.vy);
     b.y = edge > 0 ? H - 4 - b.r : 4 + b.r;
+    b.passed = false;
     fixAngle(b);
     const y = edge > 0 ? H - 3 : 3;
     for (let i = 0; i < 8; i++) emit(b.x + rand(-80, 80), y, 4, { colors: [C.mist, C.slate, C.paper], angle: edge > 0 ? -Math.PI / 2 : Math.PI / 2, spread: 1.8, speed: [80, 300], spark: 1 });
@@ -602,72 +931,414 @@
     unlock('saved');
   }
 
+  // ================================================================ rage mode
+  function startRage() {
+    G.rageT = RAGE_TIME;
+    G.run.rages++;
+    announce(G.run.rages > 1 ? 'RAGE AGAIN!' : 'RAGE MODE!', 'rage');
+    unlock('rage');
+    Sfx.rage();
+    flash(0.4, C.rust);
+    shake(0.7);
+    for (let i = 0; i < 3; i++) ring(W / 2, H / 2, Math.max(W, H) * (0.4 + i * 0.2), C.rust, 8 - i * 2, 0.6 + i * 0.2);
+  }
+  function endRage() {
+    G.rageT = 0;
+    const bonus = RAGE_BONUS * G.run.rages;
+    addScore(bonus, true);
+    updateHud();
+    announce('RAGE SURVIVED +' + bonus, 'rage');
+    confetti(7);
+    flash(0.25, C.gold);
+    Sfx.victory();
+    unlock('rageSurvive');
+  }
+
+  // ================================================================ special events
+  function startEvent(forced) {
+    const types = Object.keys(EVENTS).filter((t) => t !== G.lastEvent);
+    const type = EVENTS[forced] ? forced : pick(types);
+    G.lastEvent = type;
+    G.event = { type, t: 0, ax: (Math.random() < 0.5 ? -1 : 1) * M.baseSpeed * 0.9, jitter: 0 };
+    el.eventKicker.textContent = 'Event incoming';
+    el.eventName.textContent = EVENTS[type].name;
+    el.eventDesc.textContent = EVENTS[type].desc;
+    el.eventBanner.hidden = false;
+    el.eventBanner.classList.add('warn');
+    restartAnim(el.eventBanner, 'pop');
+    Sfx.alarm();
+  }
+  function activateEvent() {
+    const ev = G.event;
+    el.eventKicker.textContent = 'Event';
+    el.eventBanner.classList.remove('warn');
+    announce(EVENTS[ev.type].name.toUpperCase() + '!', 'event');
+    if (ev.type === 'double') G.fx.double = Math.max(G.fx.double, EVENT_LEN);
+    if (ev.type === 'invisible') Sfx.whoosh();
+    if (ev.type === 'chaos') { shake(0.4); Sfx.warp(); }
+    flash(0.12, C.slate);
+  }
+  function endEvent(survived) {
+    if (!G.event) return;
+    if (survived) {
+      G.run.events++;
+      if (G.run.events >= 5) unlock('chaos5');
+      popup(W / 2, H * 0.5, 'event survived', { size: 20, color: C.slate, font: FONT_MONO, weight: 400 });
+    }
+    G.event = null;
+    el.eventBanner.hidden = true;
+    G.eventT = rand(16, 26);
+  }
+  function updateEvent(dt, sdt) {
+    if (G.state !== 'playing') return;
+    if (!G.event) {
+      if (!has.events() || G.boss || G.bossDelay > 0 || G.rageT > 0) return;
+      G.eventT -= sdt;
+      if (G.eventT <= 0) startEvent();
+      return;
+    }
+    const ev = G.event;
+    const was = ev.t;
+    ev.t += dt;
+    if (was < EVENT_WARN && ev.t >= EVENT_WARN) activateEvent();
+    const p = ev.t < EVENT_WARN ? ev.t / EVENT_WARN : 1 - (ev.t - EVENT_WARN) / EVENT_LEN;
+    el.eventBanner.style.setProperty('--p', clamp(p, 0, 1).toFixed(3));
+    if (ev.type === 'chaos' && ev.t >= EVENT_WARN) {
+      ev.jitter -= sdt;
+      if (ev.jitter <= 0) {
+        ev.jitter = rand(0.5, 0.9);
+        for (const b of balls) {
+          if (b.serve > 0) continue;
+          const a = rand(-0.5, 0.5), c = Math.cos(a), s = Math.sin(a);
+          [b.vx, b.vy] = [b.vx * c - b.vy * s, b.vx * s + b.vy * c];
+          fixAngle(b);
+          ring(b.x, b.y, 30, C.rust, 2, 0.3);
+        }
+      }
+      G.trauma = Math.max(G.trauma, 0.12);
+    }
+    if (ev.t >= EVENT_WARN + EVENT_LEN) endEvent(true);
+  }
+  const ballVisible = () => !evOn('invisible') || ((G.event.t - EVENT_WARN) % 1.5) < 0.55;
+
+  // ================================================================ bosses
+  const bossRadius = () => clamp(Math.min(W, H) * 0.075, 34, 62);
+  function spawnBoss() {
+    const tier = Math.max(1, Math.round(G.level / 5));
+    const hp = 6 + (tier - 1) * 3;
+    G.bossDelay = 0;
+    G.boss = {
+      x: W / 2, y: H / 2, r: bossRadius(), hp, maxHp: hp, t: 0, age: 0,
+      attackT: 3, hurt: 0, mouth: 0, tier, name: BOSS_NAMES[(tier - 1) % BOSS_NAMES.length],
+    };
+    if (G.event) endEvent(false);
+    el.bossName.textContent = G.boss.name;
+    el.bossBar.style.setProperty('--p', '1');
+    el.bossBar.hidden = false;
+    announce('BOSS FIGHT!', 'boss');
+    Sfx.bossRoar();
+    shake(0.6);
+    flash(0.25, C.ink);
+    for (const t of targets) if (Math.hypot(t.x - W / 2, t.y - H / 2) < G.boss.r * 3) t.dead = true;
+  }
+  function updateBoss(dt, sdt) {
+    if (G.bossDelay > 0 && G.state === 'playing') { G.bossDelay -= dt; if (G.bossDelay <= 0) spawnBoss(); }
+    const B = G.boss;
+    if (!B) return;
+    B.t += sdt; B.age += sdt;
+    B.hurt = Math.max(0, B.hurt - sdt * 4);
+    B.mouth = Math.max(0, B.mouth - sdt * 2);
+    const span = Math.max(0, W / 2 - B.r - 30);
+    B.x = W / 2 + Math.sin(B.t * (0.6 + B.tier * 0.1)) * span * 0.85;
+    B.y = H / 2 + Math.sin(B.t * 1.3) * H * 0.04;
+    if (G.state === 'playing' && B.age > 1.2) {
+      B.attackT -= sdt;
+      if (B.attackT <= 0) { bossAttack(B); B.attackT = Math.max(1.6, 3.3 - B.tier * 0.3) * rand(0.85, 1.15); }
+    }
+  }
+  function bossAttack(B, forced) {
+    B.mouth = 1;
+    const choices = ['spit', 'spit', 'warp'];
+    if (G.blocks.length < 2) choices.push('wall');
+    const kind = forced || pick(choices);
+    if (kind === 'spit') {
+      // Fire a glob at each paddle. A direct hit stuns that paddle.
+      for (const which of ['top', 'bot']) {
+        const p = pads[which];
+        const v = H * 0.42;
+        const ty = which === 'bot' ? M.botY : M.topY + M.padH;
+        const T = Math.abs(ty - B.y) / v;
+        G.projectiles.push({ x: B.x, y: B.y + (which === 'bot' ? B.r : -B.r), vx: (p.x - B.x) / T * rand(0.7, 1.05), vy: which === 'bot' ? v : -v, r: Math.max(6, M.ballR * 0.9) });
+      }
+      Sfx.spit();
+    } else if (kind === 'warp') {
+      // Bend every ball's path.
+      for (const b of balls) {
+        if (b.serve > 0) continue;
+        b.vx = -b.vx * rand(0.6, 1.2);
+        fixAngle(b);
+        ring(b.x, b.y, 60, C.slate, 3, 0.4);
+      }
+      popup(B.x, B.y - B.r - 30, 'warp!', { size: 26, color: C.slate, font: FONT_SERIF, weight: 400, italic: true });
+      Sfx.warp();
+      shake(0.2);
+    } else {
+      // Drop two breakable blocks into the court.
+      for (const fy of [0.27, 0.73]) {
+        const w = clamp(W * 0.16, 60, 110);
+        G.blocks.push({ x: rand(w, W - w), y: H * fy, w, h: 14, age: 0, life: 8, dead: false });
+      }
+      popup(B.x, B.y - B.r - 30, 'blocks!', { size: 26, color: C.ink, font: FONT_SERIF, weight: 400, italic: true });
+      Sfx.bumper();
+    }
+  }
+  function hitBoss(b, nx, ny) {
+    const B = G.boss;
+    const dmg = G.rageT > 0 || G.fx.double > 0 ? 2 : 1;
+    B.hp -= dmg;
+    B.hurt = 1;
+    emit(B.x + nx * B.r, B.y + ny * B.r, 22, { angle: Math.atan2(ny, nx), spread: 1.8, speed: [120, 420], colors: [C.rust, C.ink, C.gold] });
+    ring(B.x, B.y, B.r * 2, C.rust, 4, 0.4);
+    popup(B.x + nx * B.r, B.y + ny * B.r - 10, '-' + dmg, { size: 26, color: C.rust });
+    el.bossBar.style.setProperty('--p', Math.max(0, B.hp / B.maxHp).toFixed(3));
+    restartAnim(el.bossBar, 'hit');
+    Sfx.bossHit();
+    shake(0.25);
+    G.hitStop = 0.05;
+    if (B.hp <= 0) killBoss();
+  }
+  function killBoss() {
+    const B = G.boss;
+    const bonus = 50 * G.level;
+    for (let i = 0; i < 4; i++) emit(B.x, B.y, 40, { colors: [C.ink, C.rust, C.gold, C.sand], speed: [150, 700], life: [0.6, 1.5] });
+    for (let i = 0; i < 4; i++) ring(B.x, B.y, B.r * (3 + i * 2), [C.rust, C.gold, C.ink, C.sage][i], 8 - i, 0.6 + i * 0.15);
+    G.boss = null;
+    G.projectiles = [];
+    el.bossBar.hidden = true;
+    G.hitStop = 0.3;
+    flash(0.4, C.gold);
+    shake(0.8);
+    addScore(bonus, true);
+    updateHud();
+    announce('BOSS DEFEATED +' + bonus, 'boss');
+    confetti(6);
+    Sfx.bossDie();
+    G.run.bosses++;
+    unlock('boss');
+  }
+  function stunPad(which) {
+    const p = pads[which];
+    p.stun = 1.6;
+    const y = which === 'bot' ? M.botY : M.topY;
+    emit(p.x, y, 24, { colors: [C.ink, C.rust, C.slate], speed: [80, 300] });
+    popup(p.x, which === 'bot' ? M.botY - 50 : M.topY + 60, 'stunned!', { size: 24, color: C.rust, font: FONT_SERIF, weight: 400, italic: true });
+    shake(0.35);
+    flash(0.15, C.ink);
+    Sfx.stun();
+  }
+
+  // ================================================================ losing a ball
+  function nearMiss(b, edge) {
+    if (G.state !== 'playing') return;
+    const p = edge > 0 ? pads.bot : pads.top;
+    const left = p.x - p.w / 2, right = p.x + p.w / 2;
+    const gap = Math.round(Math.max(0, (b.x < left ? left - b.x : b.x - right) - b.r));
+    if (gap > 36) return;
+    const y = edge > 0 ? M.botY + M.padH / 2 : M.topY + M.padH / 2;
+    G.nearMarks.push({ x1: b.x < left ? b.x + b.r : right, x2: b.x < left ? left : b.x - b.r, y, t: 0 });
+    popup(b.x, edge > 0 ? M.botY - 40 : M.topY + 50, gap <= 2 ? 'by a hair!' : `so close! ${gap}px`, { size: 22, color: C.rust, font: FONT_SERIF, weight: 400, italic: true, life: 1.2 });
+    Sfx.whoosh();
+  }
+
   function loseBall(b) {
-    const edgeY = b.y > H / 2 ? H : 0;
+    const edge = b.y > H / 2 ? 1 : -1;
     const x = clamp(b.x, 10, W - 10);
+    const edgeY = edge > 0 ? H - M.inset : M.inset;
     if (G.state === 'menu') { balls = [serveBall(1)]; return; }
     if (G.state !== 'playing') return;
 
+    if (G.mode === 'duel') {
+      // The player whose edge the ball left through loses the point.
+      const bottomScored = edge < 0;
+      if (bottomScored) G.p1++; else G.p2++;
+      G.rally = 0;
+      emit(x, edge > 0 ? H : 0, 30, { angle: edge > 0 ? -Math.PI / 2 : Math.PI / 2, spread: 1.8, colors: [C.rust, C.ink, C.sand] });
+      shake(0.4);
+      Sfx.ballLost();
+      G.scorePop = 1;
+      if (G.p1 >= DUEL_TARGET || G.p2 >= DUEL_TARGET) {
+        G.winner = G.p1 > G.p2 ? 'bottom' : 'top';
+        b.dead = true;
+        endRun('match', x, edgeY);
+      } else {
+        announce((bottomScored ? 'BOTTOM' : 'TOP') + ' SCORES!', 'event');
+        balls = [serveBall(edge, 1.1)];
+      }
+      return;
+    }
+
     if (balls.length > 1) {
       balls.splice(balls.indexOf(b), 1);
-      emit(x, edgeY, 16, { angle: edgeY ? -Math.PI / 2 : Math.PI / 2, spread: 1.6, colors: [C.slate, C.ink] });
+      emit(x, edge > 0 ? H : 0, 16, { angle: edge > 0 ? -Math.PI / 2 : Math.PI / 2, spread: 1.6, colors: [C.slate, C.ink] });
       Sfx.ballLost();
-      popup(x, edgeY ? H - 70 : 70, 'ball lost', { size: 18, color: C.slate, font: FONT_MONO, weight: 400 });
+      popup(x, edge > 0 ? H - 70 : 70, 'ball lost', { size: 18, color: C.slate, font: FONT_MONO, weight: 400 });
       shake(0.15);
       return;
     }
 
-    // Final ball: slow-motion death sequence, then the game-over screen.
+    if (G.mode === 'rush') {
+      G.timeLeft -= 3;
+      G.streak = 0; G.mult = 1;
+      popup(x, edge > 0 ? H - 80 : 80, '−3 s', { size: 34, color: C.rust });
+      emit(x, edge > 0 ? H : 0, 24, { angle: edge > 0 ? -Math.PI / 2 : Math.PI / 2, spread: 1.6, colors: [C.rust, C.ink] });
+      flash(0.2, C.rust);
+      shake(0.4);
+      Sfx.ballLost();
+      updateHud();
+      if (G.timeLeft <= 0) { G.timeLeft = 0; b.dead = true; endRun('time', W / 2, H / 2); }
+      else balls = [serveBall(edge, 0.5)];
+      return;
+    }
+
+    // Last chance: once per run, a lucky (and rare) second serve.
+    const ready = G.mode === 'survival' ? G.elapsed >= 20 : G.score >= 20;
+    if (has.lastChance() && G.lastChanceAvail && ready) {
+      G.lastChanceAvail = false;
+      G.run.lastChance = true;
+      G.streak = 0; G.mult = 1;
+      announce('LAST CHANCE!', 'last');
+      emit(x, edge > 0 ? H : 0, 40, { angle: edge > 0 ? -Math.PI / 2 : Math.PI / 2, spread: 2, colors: [C.gold, C.sand, C.ink] });
+      flash(0.3, C.gold);
+      shake(0.5);
+      Sfx.heartbeat();
+      Sfx.shield();
+      unlock('secondwind');
+      balls = [serveBall(1, 1.4)];
+      updateHud();
+      return;
+    }
+
+    b.dead = true;
+    endRun('miss', x, edgeY);
+  }
+
+  // Ends a run with a short slow-motion sequence, then shows the results.
+  function endRun(kind, x, y) {
     G.state = 'dying';
+    G.ending = kind;
     G.deathT = 0;
     G.focusX = x;
-    G.focusY = edgeY ? H - M.inset : M.inset;
-    b.dead = true;
-    emit(x, G.focusY, 70, { angle: edgeY ? -Math.PI / 2 : Math.PI / 2, spread: 2.2, speed: [150, 700], colors: [C.rust, C.ink, C.rose, C.sand], life: [0.6, 1.4] });
-    ring(x, G.focusY, Math.max(W, H) * 0.5, C.rust, 8, 1.2);
-    shake(0.9);
-    flash(0.45, C.rust);
-    Sfx.lose();
+    G.focusY = y;
+    G.dangerSlow = false;
+    if (G.event) { G.event = null; el.eventBanner.hidden = true; }
+    G.rageT = 0;
     el.btnPause.hidden = true;
+    if (kind === 'miss') {
+      emit(x, y, 70, { angle: y > H / 2 ? -Math.PI / 2 : Math.PI / 2, spread: 2.2, speed: [150, 700], colors: [C.rust, C.ink, C.rose, C.sand], life: [0.6, 1.4] });
+      ring(x, y, Math.max(W, H) * 0.5, C.rust, 8, 1.2);
+      shake(0.9);
+      flash(0.45, C.rust);
+      Sfx.lose();
+    } else if (kind === 'time') {
+      announce('TIME!', 'time');
+      confetti(6);
+      flash(0.3, C.sand);
+      Sfx.horn();
+      for (const b of balls) emit(b.x, b.y, 20, { colors: [C.rust, C.ink] });
+      balls = [];
+    } else {
+      announce((G.winner === 'bottom' ? 'BOTTOM' : 'TOP') + ' WINS!', 'time');
+      confetti(8);
+      flash(0.3, C.gold);
+      shake(0.6);
+      Sfx.victory();
+    }
   }
 
   function gameOver() {
     G.state = 'over';
-    const isBest = G.score > G.best;
-    if (isBest) { G.best = G.score; store.set('bib.best', G.best); }
-    el.overScore.textContent = G.score;
-    el.overBest.textContent = G.best;
-    el.overLevel.textContent = G.level;
-    el.overHits.textContent = G.hits;
-    el.overCombo.textContent = '×' + G.bestMult;
-    el.overNew.hidden = !isBest || G.score === 0;
+    const m = G.mode;
     el.hud.hidden = true;
+    el.bossBar.hidden = true;
+    const stats = [];
+    let isBest = false;
+    let value = G.score;
+    const setTitle = (text) => { el.overTitle.replaceChildren(); const em = document.createElement('em'); em.textContent = text; el.overTitle.append(em); };
+
+    if (m === 'duel') {
+      el.overEyebrow.textContent = 'Two players · match over';
+      setTitle((G.winner === 'bottom' ? 'Bottom' : 'Top') + ' wins!');
+      el.overScore.textContent = `${G.p1}–${G.p2}`;
+      el.overUnit.textContent = 'bottom – top';
+      stats.push(['Longest rally', G.longestRally], ['Bounces', G.hits], ['Time', fmtClock(G.elapsed)], ['Top speed', G.topSpeed.toFixed(1) + '×']);
+      unlock('duel');
+    } else {
+      value = m === 'survival' ? Math.round(G.elapsed * 10) / 10 : G.score;
+      isBest = value > (bests[m] || 0);
+      if (isBest) {
+        bests[m] = value;
+        store.set(bestKey(m), value);
+        if (m !== 'survival') store.set('bib.ghost.' + m, G.timeline.concat([G.score]).slice(0, 3600));
+      }
+      el.overEyebrow.textContent = MODES[m].name + ' · game over';
+      setTitle(m === 'rush' ? 'Time’s up!' : 'Missed it.');
+      el.overScore.textContent = fmtScore(m, value);
+      el.overUnit.textContent = MODES[m].unit;
+      if (m === 'classic') stats.push(['Best', fmtScore(m, bests[m])], ['Level', G.level], ['Bounces', G.hits], ['Top streak', G.bestStreak]);
+      if (m === 'survival') stats.push(['Best', fmtScore(m, bests[m])], ['Bounces', G.hits], ['Top streak', G.bestStreak], ['Top speed', G.topSpeed.toFixed(1) + '×']);
+      if (m === 'rush') stats.push(['Best', fmtScore(m, bests[m])], ['Bounces', G.hits], ['Top streak', G.bestStreak], ['Orbs', G.run.orbs]);
+    }
+    fillStats(el.overStats, stats);
+    el.overNew.hidden = !isBest || value === 0;
 
     // Leaderboard: offer a name if this run makes the top 10.
-    G.pending = Board.qualifies(G.score);
+    G.pending = m !== 'duel' && qualifies(m, value);
+    G.pendingValue = value;
     el.nameForm.hidden = !G.pending;
     el.rankLine.hidden = G.pending;
     if (G.pending) {
-      el.overRank.textContent = '#' + Board.rankOf(G.score);
+      el.overRank.textContent = '#' + rankOf(m, value);
       el.nameInput.value = store.get('bib.name', '');
+    } else if (m === 'duel') {
+      el.rankLine.textContent = 'Rematch? Same controls, fresh score.';
     } else {
-      const min = Board.list.length ? Board.list[Board.list.length - 1].score : 0;
-      el.rankLine.textContent = G.score === 0 ? 'Bounce it at least once to get on the board.' : `Top 10 needs ${min + 1}+. So close!`;
+      const l = Boards[m];
+      const min = l.length ? l[l.length - 1].score : 0;
+      el.rankLine.textContent = value === 0 ? 'Bounce it at least once to get on the board.' : `Top 10 needs ${fmtScore(m, min)}+. So close!`;
     }
-
+    resetShareLabel();
     setScreen('over');
     if (G.pending && finePointer) el.nameInput.focus({ preventScroll: true });
     else $('#btn-again').focus({ preventScroll: true });
+    if (isBest && value > 0) { Sfx.best(); confetti(6); }
+  }
 
-    if (isBest && G.score > 0) {
-      Sfx.best();
-      for (let i = 0; i < 6; i++) {
-        emit(W * (0.1 + i * 0.16), -10, 22, {
-          angle: Math.PI / 2, spread: 1.2, speed: [80, 360], gravity: 260, drag: 0.6,
-          life: [1.6, 2.8], size: [3, 6], spark: 0, colors: [C.rust, C.sage, C.rose, C.sand, C.slate],
-        });
-      }
+  function fillStats(dl, pairs) {
+    dl.replaceChildren();
+    for (const [k, v] of pairs) {
+      const d = document.createElement('div');
+      const dt = document.createElement('dt'); dt.textContent = k;
+      const dd = document.createElement('dd'); dd.textContent = String(v);
+      d.append(dt, dd);
+      dl.append(d);
     }
+  }
+
+  function fillPauseStats() {
+    el.pauseMode.textContent = MODES[G.mode].name;
+    const pct = G.hits ? Math.round((G.run.perfects / G.hits) * 100) + '%' : '–';
+    const s = [['Time', fmtTime(G.elapsed)]];
+    if (G.mode === 'duel') s.push(['Score', `${G.p1}–${G.p2}`], ['Rally', G.rally], ['Longest rally', G.longestRally], ['Speed', speedLabel()]);
+    else {
+      s.push(['Score', G.score]);
+      if (G.mode === 'classic') s.push(['Level', G.level]);
+      if (G.mode === 'rush') s.push(['Time left', fmtClock(G.timeLeft)]);
+      s.push(['Bounces', G.hits], ['Perfect hits', pct], ['Streak', G.streak], ['Top streak', G.bestStreak], ['Speed', speedLabel()]);
+      if (G.mode !== 'survival') s.push(['Orbs', G.run.orbs], ['Events', G.run.events]);
+      if (G.run.rages) s.push(['Rages', G.run.rages]);
+      if (G.run.bosses) s.push(['Bosses', G.run.bosses]);
+    }
+    fillStats(el.pauseStats, s);
   }
 
   // Save the pending leaderboard entry (on submit, or automatically when leaving the screen).
@@ -676,25 +1347,96 @@
     G.pending = false;
     const name = cleanName(el.nameInput.value) || 'Player';
     store.set('bib.name', name);
-    G.lastEntry = { name, score: G.score, level: G.level, date: Date.now() };
-    const rank = Board.add(G.lastEntry);
+    G.lastEntry = { name, score: G.pendingValue, level: G.level, title: currentTitle(), date: Date.now() };
+    G.lastEntryMode = G.mode;
+    const rank = addEntry(G.mode, G.lastEntry);
     el.nameForm.hidden = true;
     el.rankLine.hidden = false;
-    el.rankLine.textContent = `Saved as ${name}: #${rank} on the leaderboard`;
+    el.rankLine.textContent = `Saved as ${name}: #${rank} on the ${MODES[G.mode].name} leaderboard`;
   }
 
-  // ---------------------------------------------------------------- records screen (leaderboard / badges / orbs)
+  // ================================================================ share card
+  const shareLabel = (t) => { el.btnShare.querySelector('span').textContent = t; };
+  function resetShareLabel() { shareLabel('Share score card'); }
+  async function shareCard() {
+    if (document.fonts && document.fonts.ready) await document.fonts.ready;
+    const cv = document.createElement('canvas');
+    cv.width = 1200; cv.height = 630;
+    const c = cv.getContext('2d');
+    const m = G.mode;
+    c.fillStyle = C.paper; c.fillRect(0, 0, 1200, 630);
+    c.fillStyle = 'rgba(28,27,29,0.07)';
+    for (let y = 20; y < 630; y += 30) for (let x = 20; x < 1200; x += 30) c.fillRect(x - 1, y - 1, 2, 2);
+    // frame with an offset shadow
+    c.fillStyle = C.ink; c.fillRect(48, 48, 1112, 542);
+    c.fillStyle = C.paper; c.fillRect(36, 36, 1112, 542);
+    c.strokeStyle = C.ink; c.lineWidth = 4; c.strokeRect(36, 36, 1112, 542);
+    // text
+    c.fillStyle = C.ink;
+    c.font = `22px ${FONT_MONO}`;
+    c.fillText(`BOUNCE IT BACK · ${MODES[m].name.toUpperCase()}`, 84, 108);
+    const big = m === 'duel' ? `${G.p1}–${G.p2}` : fmtScore(m, m === 'survival' ? Math.round(G.elapsed * 10) / 10 : G.score);
+    c.font = `800 190px ${FONT_SANS}`;
+    c.fillText(big, 76, 300, 700);
+    c.font = `italic 54px ${FONT_SERIF}`;
+    c.fillStyle = C.rust;
+    c.fillText(m === 'duel' ? (G.winner === 'bottom' ? 'Bottom wins!' : 'Top wins!') : MODES[m].unit, 84, 370);
+    c.fillStyle = C.ink;
+    c.font = `600 28px ${FONT_SANS}`;
+    const line = m === 'duel' ? `Longest rally ${G.longestRally} · ${G.hits} bounces`
+      : `${m === 'classic' ? 'Level ' + G.level + ' · ' : ''}${G.hits} bounces · top streak ${G.bestStreak}`;
+    c.fillText(line, 84, 440, 700);
+    c.font = `24px ${FONT_MONO}`;
+    const name = cleanName(store.get('bib.name', ''));
+    c.fillText(`${name ? name + ' · ' : ''}${currentTitle()} · ${earned.size}/${BADGES.length} badges`, 84, 490, 720);
+    c.fillStyle = C.rust;
+    c.fillText('bounce-it-back-game.vercel.app', 84, 540);
+    // art: paddles, ball and trail
+    c.fillStyle = C.ink;
+    c.fillRect(840, 120, 220, 16); c.fillRect(840, 480, 220, 16);
+    c.fillStyle = C.rust;
+    c.fillRect(925, 124, 50, 8); c.fillRect(925, 484, 50, 8);
+    for (let i = 8; i >= 0; i--) {
+      c.globalAlpha = i ? (1 - i / 9) * 0.35 : 1;
+      c.beginPath(); c.arc(985 - i * 14, 330 + i * 22, 18 * (i ? 1 - i / 14 : 1), 0, Math.PI * 2); c.fill();
+    }
+    c.globalAlpha = 1;
+    c.strokeStyle = C.ink; c.lineWidth = 3;
+    c.beginPath(); c.arc(985, 330, 18, 0, Math.PI * 2); c.stroke();
+
+    const blob = await new Promise((r) => cv.toBlob(r, 'image/png'));
+    if (!blob) { shareLabel('Could not create card'); return; }
+    const file = new File([blob], 'bounce-it-back-score.png', { type: 'image/png' });
+    const text = m === 'duel' ? `We just played Bounce it Back: ${big}!` : `I got ${big} ${MODES[m].unit} in Bounce it Back (${MODES[m].name}). Can you beat it?`;
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file], title: 'Bounce it Back', text }); shareLabel('Shared!'); return; }
+      catch (e) { if (e && e.name === 'AbortError') return; }
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = file.name;
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    shareLabel('Card downloaded');
+  }
+
+  // ================================================================ records & settings screens
   function renderRecords() {
+    const m = G.boardMode;
+    for (const b of $$('.board-mode')) b.setAttribute('aria-pressed', String(b.dataset.mode === m));
     el.boardList.replaceChildren();
-    el.boardEmpty.hidden = Board.list.length > 0;
-    Board.list.forEach((e, i) => {
+    el.boardEmpty.hidden = Boards[m].length > 0;
+    Boards[m].forEach((e, i) => {
       const li = document.createElement('li');
       if (e === G.lastEntry) li.className = 'me';
       const rank = document.createElement('span'); rank.className = 'rank'; rank.textContent = String(i + 1).padStart(2, '0');
-      const name = document.createElement('span'); name.className = 'who'; name.textContent = e.name;
-      const lvl = document.createElement('span'); lvl.className = 'lvl'; lvl.textContent = 'L' + e.level;
-      const sc = document.createElement('span'); sc.className = 'pts'; sc.textContent = e.score;
-      li.append(rank, name, lvl, sc);
+      const who = document.createElement('span'); who.className = 'who';
+      const nm = document.createElement('b'); nm.textContent = e.name;
+      who.append(nm);
+      if (e.title) { const t = document.createElement('small'); t.textContent = e.title; who.append(t); }
+      const lvl = document.createElement('span'); lvl.className = 'lvl'; lvl.textContent = m === 'classic' ? 'L' + e.level : '';
+      const sc = document.createElement('span'); sc.className = 'pts'; sc.textContent = fmtScore(m, e.score);
+      li.append(rank, who, lvl, sc);
       el.boardList.append(li);
     });
 
@@ -702,13 +1444,16 @@
     for (const b of BADGES) {
       const d = document.createElement('div');
       d.className = 'badge' + (earned.has(b.id) ? ' got' : '');
-      const m = document.createElement('span'); m.className = 'medal'; m.textContent = earned.has(b.id) ? b.icon : '?';
+      const md = document.createElement('span'); md.className = 'medal'; md.textContent = earned.has(b.id) ? b.icon : '?';
       const n = document.createElement('b'); n.textContent = b.name;
       const s = document.createElement('small'); s.textContent = b.desc;
-      d.append(m, n, s);
+      d.append(md, n, s);
       el.badgeGrid.append(d);
     }
     el.badgeCount.textContent = `${earned.size}/${BADGES.length}`;
+    const next = TITLES.find((t) => t.at > earned.size);
+    const need = next ? next.at - earned.size : 0;
+    el.titleLine.textContent = `Your title: ${currentTitle()}` + (next ? ` · ${need} more badge${need === 1 ? '' : 's'} to ${next.name}` : ' · every badge earned!');
   }
 
   function buildOrbGuide() {
@@ -736,6 +1481,7 @@
   function openRecords(tab) {
     commitPending();
     G.recordsFrom = el.over.classList.contains('show') ? 'over' : 'menu';
+    G.boardMode = G.recordsFrom === 'over' && G.lastEntryMode ? G.lastEntryMode : (G.mode === 'duel' ? 'classic' : G.mode);
     renderRecords();
     selectTab(tab || 'board');
     setScreen('records');
@@ -743,10 +1489,11 @@
   }
   function closeRecords() {
     setScreen(G.recordsFrom);
+    if (G.recordsFrom === 'menu') refreshMenu();
     (G.recordsFrom === 'over' ? $('#btn-again') : $('#btn-play')).focus({ preventScroll: true });
   }
   function selectTab(name) {
-    for (const t of document.querySelectorAll('[role="tab"]')) {
+    for (const t of $$('[role="tab"]')) {
       const on = t.dataset.tab === name;
       t.setAttribute('aria-selected', String(on));
       t.tabIndex = on ? 0 : -1;
@@ -754,67 +1501,146 @@
     }
   }
 
-  // ---------------------------------------------------------------- update
+  let settingsFrom = 'menu';
+  function openSettings() {
+    settingsFrom = G.state === 'paused' ? 'pause' : G.state === 'over' ? 'over' : 'menu';
+    for (const b of $$('.pack')) b.setAttribute('aria-checked', String(b.dataset.pack === Sfx.pack));
+    el.musicToggle.setAttribute('aria-checked', String(Music.on));
+    setScreen('settings');
+    $('#btn-settings-back').focus({ preventScroll: true });
+  }
+  function closeSettings() { setScreen(settingsFrom); }
+
+  // ================================================================ update
   function update(dt) {
     G.time += dt;
+    const playing = G.state === 'playing';
 
-    // Time scale: slow-mo power-up, death slow-down, brief hit-stop on perfect hits.
+    // Danger slow-mo: the last ball is about to slip past a paddle.
+    G.dangerSlow = false;
+    if (playing && single() && balls.length === 1 && G.shield === 0) {
+      const b = balls[0];
+      if (b.serve <= 0 && !b.passed) {
+        const toBot = b.vy > 0;
+        const p = toBot ? pads.bot : pads.top;
+        const d = toBot ? M.botY - (b.y + b.r) : b.y - b.r - (M.topY + M.padH);
+        if (d > 0 && d < Math.max(70, Math.abs(b.vy) * 0.16)) {
+          let px = b.x + b.vx * (d / Math.abs(b.vy));
+          if (px < 0) px = -px; else if (px > W) px = 2 * W - px;
+          if (px < p.x - p.w / 2 - b.r || px > p.x + p.w / 2 + b.r) {
+            G.dangerSlow = true;
+            if (!b.danger) { b.danger = true; Sfx.heartbeat(); }
+          }
+        }
+      }
+    }
+
+    // Time scale: slow-mo orb, danger, death slow-down, brief hit-stop.
     let tsTarget = G.fx.slow > 0 ? 0.55 : 1;
+    if (G.dangerSlow) tsTarget = 0.3;
     if (G.state === 'dying') tsTarget = 0.12;
     if (G.state === 'over') tsTarget = 0.5;
-    G.timeScale = lerp(G.timeScale, tsTarget, damp(G.state === 'dying' ? 10 : 5, dt));
+    G.timeScale = lerp(G.timeScale, tsTarget, damp(G.state === 'dying' || G.dangerSlow ? 12 : 5, dt));
     let sdt = dt * G.timeScale;
     if (G.hitStop > 0) { G.hitStop -= dt; sdt = 0; }
     if (G.state === 'paused') sdt = 0;
 
     if (G.state === 'dying') {
       G.deathT += dt;
-      G.zoom = lerp(G.zoom, reduced ? 1 : 1.12, damp(4, dt));
-      if (G.deathT > 1.25) gameOver();
+      G.zoom = lerp(G.zoom, reduced || G.ending !== 'miss' ? 1 : 1.12, damp(4, dt));
+      if (G.deathT > (G.ending === 'miss' ? 1.25 : 1.6)) gameOver();
     } else {
       G.zoom = lerp(G.zoom, 1, damp(6, dt));
     }
 
-    // Power-up timers (slow-mo counts in real time, the rest in game time)
-    if (G.state === 'playing') {
+    if (playing) {
+      G.elapsed += dt;
+      G.topSpeed = Math.max(G.topSpeed, speedRatio());
+      while (G.elapsed >= G.tlNext) { G.timeline.push(G.score); G.tlNext++; }
+      if (G.elapsed >= 60 && (G.mode === 'classic' || G.mode === 'survival')) unlock('survive60');
+      if (G.mode === 'survival' && G.elapsed >= 120) unlock('survival120');
+      if (G.mode === 'rush') {
+        G.timeLeft -= dt;
+        const s = Math.ceil(G.timeLeft);
+        if (s <= 10 && s < G.lastTick && s > 0) { G.lastTick = s; Sfx.tick(s <= 3); bump(el.s[1].value); }
+        if (G.timeLeft <= 0) { G.timeLeft = 0; endRun('time', W / 2, H / 2); }
+      }
       for (const k of TIMED) G.fx[k] = Math.max(0, G.fx[k] - (k === 'slow' ? dt : sdt));
-      G.spawnT -= sdt;
-      if (G.spawnT <= 0) { if (targets.length < (G.level >= 4 ? 3 : 2)) spawnTarget(); G.spawnT = rand(3.2, 6); }
+      if (has.orbs()) {
+        G.spawnT -= sdt;
+        if (G.spawnT <= 0) {
+          const cap = G.mode === 'rush' || G.level >= 4 ? 3 : 2;
+          if (targets.length < cap) spawnTarget();
+          G.spawnT = G.mode === 'rush' ? rand(2, 3.5) : rand(3.2, 6);
+        }
+      }
+      if (G.rageT > 0) { G.rageT -= dt; if (G.rageT <= 0) endRage(); }
+      if (G.state === 'playing') updateHud();
     }
-    pad.tw = M.basePadW * (G.fx.wide > 0 ? 1.6 : 1) * (G.fx.shrink > 0 ? 0.55 : 1);
 
-    // Background tint shifts a little with each level.
-    const tint = LEVEL_TINTS[(G.level - 1) % LEVEL_TINTS.length];
-    G.bg = mixRgb(G.bg, tint, damp(2, dt));
+    updateEvent(dt, sdt);
+    updateBoss(dt, sdt);
 
-    // Paddles move in real time, so slow-mo genuinely helps the player.
-    if (G.state !== 'paused') updatePaddle(dt);
-
-    // Bumpers drift side to side.
-    for (const u of bumpers) {
-      u.age += sdt;
-      u.hit = Math.max(0, u.hit - sdt * 4);
-      u.x += u.vx * sdt;
-      if (u.x < u.r + 10) { u.x = u.r + 10; u.vx = Math.abs(u.vx); }
-      if (u.x > W - u.r - 10) { u.x = W - u.r - 10; u.vx = -Math.abs(u.vx); }
+    // Background tint: per level, red in rage, cool in duel.
+    let tint = LEVEL_TINTS[0];
+    if (G.state !== 'menu') {
+      if (G.mode === 'classic') tint = LEVEL_TINTS[(G.level - 1) % LEVEL_TINTS.length];
+      if (G.mode === 'survival') tint = LEVEL_TINTS[Math.floor(G.elapsed / 30) % LEVEL_TINTS.length];
+      if (G.mode === 'duel') tint = DUEL_TINT;
     }
+    if (G.rageT > 0) tint = RAGE_TINT;
+    G.bg = mixRgb(G.bg, tint, damp(G.rageT > 0 ? 6 : 2, dt));
+
+    if (G.state !== 'paused') updatePads(dt);
+
+    // Bumpers drift side to side (they step aside during a boss fight).
+    if (!G.boss) {
+      for (const u of bumpers) {
+        u.age += sdt;
+        u.hit = Math.max(0, u.hit - sdt * 4);
+        u.x += u.vx * sdt;
+        if (u.x < u.r + 10) { u.x = u.r + 10; u.vx = Math.abs(u.vx); }
+        if (u.x > W - u.r - 10) { u.x = W - u.r - 10; u.vx = -Math.abs(u.vx); }
+      }
+    }
+
+    // Boss projectiles and blocks
+    for (const pr of G.projectiles) {
+      pr.x += pr.vx * sdt; pr.y += pr.vy * sdt;
+      for (const which of ['top', 'bot']) {
+        const p = pads[which];
+        const crossing = which === 'bot'
+          ? pr.vy > 0 && pr.y + pr.r >= M.botY && pr.y - pr.r <= M.botY + M.padH
+          : pr.vy < 0 && pr.y - pr.r <= M.topY + M.padH && pr.y + pr.r >= M.topY;
+        if (!pr.dead && crossing && Math.abs(pr.x - p.x) <= p.w / 2 + pr.r) { pr.dead = true; if (G.state === 'playing') stunPad(which); }
+      }
+      if (pr.y < -30 || pr.y > H + 30) pr.dead = true;
+    }
+    G.projectiles = G.projectiles.filter((p) => !p.dead);
+    for (const k of G.blocks) { k.age += sdt; if (k.age > k.life) k.dead = true; }
+    G.blocks = G.blocks.filter((k) => !k.dead);
 
     // Balls
+    const targetSpeed = curSpeed();
     for (let i = balls.length - 1; i >= 0; i--) {
       const b = balls[i];
-      if (b.dead) continue;
+      if (!b || b.dead) continue;
       b.grow = Math.max(0, b.grow - dt * 3);
       b.sqv += (-520 * b.sq - 16 * b.sqv) * sdt;   // squash spring
       b.sq += b.sqv * sdt;
       if (b.serve > 0) { b.serve -= sdt; b.trail.length = 0; continue; }
+      // ease the ball's speed toward the current target (levels, survival ramp, rage, chaos)
+      const s = Math.hypot(b.vx, b.vy);
+      if (s > 0 && sdt > 0) { const k = lerp(s, targetSpeed, damp(3, sdt)) / s; b.vx *= k; b.vy *= k; }
       if (G.fx.magnet > 0 && G.state === 'playing') applyMagnet(b, sdt);
       stepBall(b, sdt);
       if (sdt > 0) {
         b.trail.unshift(b.x, b.y);
-        const maxLen = (reduced ? 8 : 16) * 2;
+        const maxLen = (reduced ? 8 : 16 + tierIdx(G.streak) * 5 + (G.rageT > 0 ? 8 : 0)) * 2;
         if (b.trail.length > maxLen) b.trail.length = maxLen;
-        if (G.fx.double > 0 && Math.random() < 0.7) {
-          emit(b.x, b.y, 1, { speed: [10, 60], gravity: -140, life: [0.25, 0.55], colors: [C.rust, C.ember, C.sand], spark: 0, size: [2, 4.5] });
+        const fiery = G.fx.double > 0 || G.rageT > 0;
+        if (fiery && Math.random() < (G.rageT > 0 ? 1 : 0.7) && ballVisible()) {
+          emit(b.x, b.y, G.rageT > 0 ? 2 : 1, { speed: [10, 70], gravity: -160, life: [0.25, 0.6], colors: [C.rust, C.ember, C.gold], spark: 0, size: [2, 5] });
         }
       }
     }
@@ -848,11 +1674,13 @@
     rings = rings.filter((r) => r.t < r.life);
     if (G.state !== 'paused') for (const p of popups) p.t += dt * (G.state === 'dying' ? 0.4 : 1);
     popups = popups.filter((p) => p.t < p.life);
+    for (const k of G.nearMarks) k.t += dt;
+    G.nearMarks = G.nearMarks.filter((k) => k.t < 1.2);
 
-    pad.top.flash = Math.max(0, pad.top.flash - dt * 4);
-    pad.bot.flash = Math.max(0, pad.bot.flash - dt * 4);
-    pad.top.bump = lerp(pad.top.bump, 0, damp(14, dt));
-    pad.bot.bump = lerp(pad.bot.bump, 0, damp(14, dt));
+    for (const p of padList()) {
+      p.flash = Math.max(0, p.flash - dt * 4);
+      p.bump = lerp(p.bump, 0, damp(14, dt));
+    }
 
     G.trauma = Math.max(0, G.trauma - dt * 1.5);
     G.flash = Math.max(0, G.flash - dt * 2.2);
@@ -861,85 +1689,127 @@
     G.shownScore = lerp(G.shownScore, G.score, damp(12, dt));
 
     updateChips();
+    Music.set(G.state === 'playing' ? (G.rageT > 0 ? 3 : G.boss ? 2 : 1) : 0);
   }
 
   function updateChips() {
     const live = G.state === 'playing' || G.state === 'paused';
-    for (const k of TIMED) {
-      const chip = el.chips[k];
-      const p = live ? G.fx[k] / ORBS[k].dur : 0;
-      const show = p > 0;
+    const setChip = (name, p, label) => {
+      const chip = el.chips[name];
+      const show = live && p > 0;
       if (chip.hidden === show) chip.hidden = !show;
-      if (show) chip.style.setProperty('--p', p.toFixed(3));
-    }
-    const sc = el.chips.shield;
-    const show = live && G.shield > 0;
-    if (sc.hidden === show) sc.hidden = !show;
-    const txt = G.shield > 1 ? 'Shield ×2' : 'Shield';
-    if (show && sc.firstElementChild.textContent !== txt) sc.firstElementChild.textContent = txt;
+      if (show) { chip.style.setProperty('--p', Math.min(1, p).toFixed(3)); if (label) setText(chip.firstElementChild, label); }
+    };
+    for (const k of TIMED) setChip(k, G.fx[k] / ORBS[k].dur);
+    setChip('rage', G.rageT / RAGE_TIME, 'Rage ' + Math.ceil(G.rageT) + 's');
+    setChip('shield', G.shield > 0 ? 1 : 0, G.shield > 1 ? 'Shield ×2' : 'Shield');
   }
 
-  // Magnet: steer the ball toward the paddle it is heading for, keeping its speed.
+  // Magnet: steer the ball toward the centre of the paddle it is heading for, keeping its speed.
   function applyMagnet(b, sdt) {
-    const d = b.vy > 0 ? M.botY - b.y : b.y - (M.topY + M.padH);
+    const toBot = b.vy > 0;
+    const p = toBot ? pads.bot : pads.top;
+    const d = toBot ? M.botY - b.y : b.y - (M.topY + M.padH);
     if (d <= 0 || d > H * 0.5) return;
     const s = Math.hypot(b.vx, b.vy);
     const tHit = d / Math.abs(b.vy);
-    const want = clamp((pad.x - b.x) / tHit, -s * 0.85, s * 0.85);
-    b.vx = lerp(b.vx, want, damp(2.2, sdt));
+    const want = clamp((p.x - b.x) / tHit, -s * 0.85, s * 0.85);
+    b.vx = lerp(b.vx, want, damp(2.4, sdt));
     b.vy = Math.sign(b.vy) * Math.sqrt(Math.max(s * s - b.vx * b.vx, (s * 0.4) ** 2));
   }
 
-  function updatePaddle(dt) {
-    const prevX = pad.x;
+  const reversed = () => evOn('reverse');
+  function updatePads(dt) {
+    const keySpeed = Math.max(700, W * 1.3);
     if (G.state === 'menu') {
       // Attract mode: an imperfect autopilot chases the ball.
       const b = balls[0];
-      if (b) targetX = b.x + Math.sin(G.time * 1.3) * pad.w * 0.32;
-    } else if (keys.left || keys.right) {
-      const dir = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
-      targetX = clamp((targetX === null ? pad.x : targetX) + dir * Math.max(700, W * 1.3) * dt, 0, W);
+      if (b) for (const p of padList()) p.targetX = b.x + Math.sin(G.time * 1.3) * p.w * 0.32;
+    } else if (G.mode === 'duel') {
+      const botDir = (keys.d ? 1 : 0) - (keys.a ? 1 : 0);
+      const topDir = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
+      if (botDir) pads.bot.targetX = clamp((pads.bot.targetX ?? pads.bot.x) + botDir * keySpeed * dt, 0, W);
+      if (topDir) pads.top.targetX = clamp((pads.top.targetX ?? pads.top.x) + topDir * keySpeed * dt, 0, W);
+    } else {
+      let dir = (keys.right || keys.d ? 1 : 0) - (keys.left || keys.a ? 1 : 0);
+      if (reversed()) dir = -dir;
+      if (dir) for (const p of padList()) p.targetX = clamp((p.targetX ?? p.x) + dir * keySpeed * dt, 0, W);
     }
-    pad.w = lerp(pad.w, pad.tw, damp(10, dt));
-    if (targetX !== null) pad.x = lerp(pad.x, targetX, damp(G.state === 'menu' ? 8 : 30, dt));
-    pad.x = clamp(pad.x, pad.w / 2, W - pad.w / 2);
-    pad.vx = dt > 0 ? (pad.x - prevX) / dt : 0;
-    pad.tilt = lerp(pad.tilt, clamp(pad.vx / 4000, -0.09, 0.09), damp(12, dt));
+    const base = M.basePadW;
+    for (const p of padList()) {
+      p.stun = Math.max(0, p.stun - dt);
+      let k = 1;
+      if (G.fx.wide > 0) k *= 1.6;
+      if (G.fx.shrink > 0) k *= 0.55;
+      if (p.stun > 0) k *= 0.6;
+      p.tw = base * k;
+      const prevX = p.x;
+      p.w = lerp(p.w, p.tw, damp(10, dt));
+      if (p.targetX !== null) p.x = lerp(p.x, p.targetX, damp(G.state === 'menu' ? 8 : p.stun > 0 ? 7 : 30, dt));
+      p.x = clamp(p.x, p.w / 2, W - p.w / 2);
+      p.vx = dt > 0 ? (p.x - prevX) / dt : 0;
+      p.tilt = lerp(p.tilt, clamp(p.vx / 4000, -0.09, 0.09), damp(12, dt));
+    }
   }
 
-  // Sub-stepped so a fast ball can never tunnel through a paddle or bumper.
+  // Sub-stepped so a fast ball can never tunnel through a paddle, bumper or boss.
   function stepBall(b, sdt) {
     const sp = Math.hypot(b.vx, b.vy);
     const steps = Math.max(1, Math.ceil((sp * sdt) / (b.r * 0.7)));
     const h = sdt / steps;
-    const half = pad.w / 2;
     const playing = G.state === 'playing';
+    const bot = pads.bot, top = pads.top;
+    const gravity = evOn('gravity') ? G.event.ax : 0;
+    const bounceOff = (cx, cy, R, onHit) => {
+      const dx = b.x - cx, dy = b.y - cy;
+      const dist = Math.hypot(dx, dy);
+      if (dist < R && dist > 0) {
+        const nx = dx / dist, ny = dy / dist;
+        const dot = b.vx * nx + b.vy * ny;
+        if (dot < 0) { b.vx -= 2 * dot * nx; b.vy -= 2 * dot * ny; fixAngle(b); onHit(nx, ny); }
+        b.x = cx + nx * R; b.y = cy + ny * R;
+      }
+    };
     for (let s = 0; s < steps; s++) {
       const py = b.y;
+      if (gravity) b.vx += gravity * h;
       b.x += b.vx * h;
       b.y += b.vy * h;
 
       if (b.x - b.r < 0) { b.x = b.r; b.vx = Math.abs(b.vx); hitWall(b, -1); }
       else if (b.x + b.r > W) { b.x = W - b.r; b.vx = -Math.abs(b.vx); hitWall(b, 1); }
 
-      for (const u of bumpers) {
-        if (u.age < 0.4) continue;
-        const dx = b.x - u.x, dy = b.y - u.y;
-        const dist = Math.hypot(dx, dy);
-        const R = u.r + b.r;
-        if (dist < R && dist > 0) {
-          const nx = dx / dist, ny = dy / dist;
-          const dot = b.vx * nx + b.vy * ny;
-          if (dot < 0) { b.vx -= 2 * dot * nx; b.vy -= 2 * dot * ny; fixAngle(b); hitBumper(u, b, nx, ny); }
-          b.x = u.x + nx * R; b.y = u.y + ny * R;
+      if (G.boss) {
+        const B = G.boss;
+        if (B.age > 0.8) bounceOff(B.x, B.y, B.r + b.r, (nx, ny) => { if (playing) hitBoss(b, nx, ny); });
+      } else {
+        for (const u of bumpers) if (u.age >= 0.4) bounceOff(u.x, u.y, u.r + b.r, (nx, ny) => hitBumper(u, b, nx, ny));
+      }
+      for (const k of G.blocks) {
+        if (k.dead || k.age < 0.3) continue;
+        const cx = clamp(b.x, k.x - k.w / 2, k.x + k.w / 2), cy = clamp(b.y, k.y - k.h / 2, k.y + k.h / 2);
+        const dx = b.x - cx, dy = b.y - cy;
+        if (dx * dx + dy * dy < b.r * b.r) {
+          if (Math.abs(dx) > Math.abs(dy)) b.vx = (Math.sign(dx) || 1) * Math.abs(b.vx);
+          else b.vy = (Math.sign(dy) || 1) * Math.abs(b.vy);
+          k.dead = true;
+          emit(k.x, k.y, 24, { colors: [C.ink, C.rust, C.sand], speed: [80, 320] });
+          if (playing) { const pts = addScore(2); popup(k.x, k.y - 20, '+' + pts, { size: 22, color: C.ink }); Sfx.bumper(); shake(0.15); }
         }
       }
 
-      const inX = b.x >= pad.x - half - b.r * 0.8 && b.x <= pad.x + half + b.r * 0.8;
-      if (b.vy > 0 && inX && b.y + b.r >= M.botY && py + b.r <= M.botY + M.padH * 0.6) { hitPaddle(b, 'bot'); continue; }
-      if (b.vy < 0 && inX && b.y - b.r <= M.topY + M.padH && py - b.r >= M.topY + M.padH * 0.4) { hitPaddle(b, 'top'); continue; }
+      const inBot = b.x >= bot.x - bot.w / 2 - b.r * 0.8 && b.x <= bot.x + bot.w / 2 + b.r * 0.8;
+      const inTop = b.x >= top.x - top.w / 2 - b.r * 0.8 && b.x <= top.x + top.w / 2 + b.r * 0.8;
+      if (b.vy > 0 && inBot && b.y + b.r >= M.botY && py + b.r <= M.botY + M.padH * 0.6) { hitPaddle(b, 'bot'); continue; }
+      if (b.vy < 0 && inTop && b.y - b.r <= M.topY + M.padH && py - b.r >= M.topY + M.padH * 0.4) { hitPaddle(b, 'top'); continue; }
 
-      if (playing && G.shield > 0) {
+      // Passed a paddle line without a hit: check for a near miss once.
+      if (!b.passed && ((b.vy > 0 && b.y - b.r > M.botY + M.padH) || (b.vy < 0 && b.y + b.r < M.topY))) {
+        b.passed = true;
+        nearMiss(b, b.vy > 0 ? 1 : -1);
+      }
+
+      if (playing && G.shield > 0 && single()) {
         if (b.vy > 0 && b.y + b.r >= H - 3) { useShield(b, 1); continue; }
         if (b.vy < 0 && b.y - b.r <= 3) { useShield(b, -1); continue; }
       }
@@ -947,7 +1817,7 @@
     }
   }
 
-  // ---------------------------------------------------------------- render
+  // ================================================================ render
   function render() {
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     ctx.fillStyle = `rgb(${G.bg.map((v) => Math.round(v)).join(',')})`;
@@ -957,8 +1827,9 @@
     const mag = reduced ? 0 : G.trauma * G.trauma * 22;
     const ox = (Math.random() * 2 - 1) * mag;
     const oy = (Math.random() * 2 - 1) * mag;
-    const fx = G.state === 'dying' || G.state === 'over' ? G.focusX : W / 2;
-    const fy = G.state === 'dying' || G.state === 'over' ? G.focusY : H / 2;
+    const focus = G.state === 'dying' || G.state === 'over';
+    const fx = focus ? G.focusX : W / 2;
+    const fy = focus ? G.focusY : H / 2;
     ctx.save();
     ctx.translate(fx + ox, fy + oy);
     ctx.scale(G.zoom, G.zoom);
@@ -966,17 +1837,24 @@
     ctx.translate(-fx, -fy);
 
     drawBackground();
+    drawGravity();
     drawDanger();
     drawShield();
     for (const r of rings) drawRing(r);
-    for (const u of bumpers) drawBumper(u);
+    if (!G.boss) for (const u of bumpers) drawBumper(u);
+    for (const k of G.blocks) drawBlock(k);
+    if (G.boss) drawBoss(G.boss);
     for (const t of targets) drawTarget(t);
-    for (const b of balls) drawTrail(b);
+    const visible = ballVisible();
+    if (visible) for (const b of balls) drawTrail(b);
     drawParticles();
-    for (const b of balls) drawBall(b);
+    for (const pr of G.projectiles) drawProjectile(pr);
+    if (visible) for (const b of balls) drawBall(b);
+    else for (const b of balls) drawGhostHint(b);
     drawMagnet();
-    drawPaddle(M.topY, pad.top, -1);
-    drawPaddle(M.botY, pad.bot, 1);
+    drawPaddle(M.topY, pads.top, -1);
+    drawPaddle(M.botY, pads.bot, 1);
+    for (const k of G.nearMarks) drawNearMark(k);
     for (const p of popups) drawPopup(p);
 
     ctx.restore();
@@ -989,12 +1867,14 @@
     }
     if (G.fx.slow > 0 && G.state === 'playing') drawVignette(Math.min(1, G.fx.slow) * 0.25, C.slate);
     if (G.fx.shrink > 0 && G.state === 'playing') drawVignette(Math.min(1, G.fx.shrink) * 0.12, C.ink);
-    if (G.state === 'dying') drawVignette(Math.min(1, G.deathT * 2) * 0.35, C.rust);
+    if (G.rageT > 0) drawVignette(0.3 + Math.sin(G.time * 10) * (reduced ? 0 : 0.1), C.rust);
+    if (G.dangerSlow) drawVignette(0.3, C.ink);
+    if (G.state === 'dying' && G.ending === 'miss') drawVignette(Math.min(1, G.deathT * 2) * 0.35, C.rust);
   }
 
   function drawBackground() {
     const gap = W < 500 ? 24 : 32;
-    const drift = (G.time * (6 + G.level * 2)) % gap;   // the grid drifts faster as levels climb
+    const drift = (G.time * (6 + G.level * 2 + (G.rageT > 0 ? 40 : 0))) % gap;   // the grid drifts faster as levels climb
     ctx.fillStyle = 'rgba(28,27,29,0.07)';
     for (let y = -gap + drift; y < H + gap; y += gap) {
       for (let x = gap / 2; x < W; x += gap) ctx.fillRect(x - 1, y - 1, 2, 2);
@@ -1005,35 +1885,72 @@
     ctx.beginPath(); ctx.moveTo(0, H / 2); ctx.lineTo(W, H / 2); ctx.stroke();
     ctx.setLineDash([]);
 
-    if (G.state !== 'menu') {
-      // giant score numeral behind the play
-      const size = Math.min(W * 0.55, H * 0.42);
-      const s = 1 + G.scorePop * 0.12;
-      ctx.save();
-      ctx.translate(W / 2, H / 2);
-      ctx.scale(s, s);
-      ctx.font = `800 ${size}px ${FONT_SANS}`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.globalAlpha = (0.07 + G.scorePop * 0.12) * (G.bannerT > 0 ? 0.25 : 1);
-      ctx.fillStyle = G.scorePop > 0.05 ? C.rust : C.ink;
-      ctx.fillText(String(Math.round(G.shownScore)), 0, size * 0.04);
-      ctx.restore();
-    } else {
-      ctx.save();
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    if (G.state === 'menu') {
       ctx.font = `italic ${Math.min(W * 0.3, 260)}px ${FONT_SERIF}`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
       ctx.globalAlpha = 0.06;
       ctx.fillStyle = C.rust;
       ctx.fillText('bounce', W / 2 + Math.sin(G.time * 0.4) * 30, H / 2);
-      ctx.restore();
+    } else if (G.mode === 'duel') {
+      // each player's score in their own half
+      const size = Math.min(W * 0.4, H * 0.28);
+      ctx.font = `800 ${size}px ${FONT_SANS}`;
+      ctx.globalAlpha = 0.08 + G.scorePop * 0.1;
+      ctx.fillStyle = C.ink;
+      ctx.fillText(String(G.p2), W / 2, H * 0.27);
+      ctx.fillText(String(G.p1), W / 2, H * 0.73);
+      ctx.font = `14px ${FONT_MONO}`;
+      ctx.globalAlpha = 0.45;
+      ctx.fillText(`TOP ↑ · first to ${DUEL_TARGET} · ↓ BOTTOM`, W / 2, H / 2 - 14);
+    } else if (G.mode === 'rush' && G.timeLeft <= 10 && G.state === 'playing') {
+      const size = Math.min(W * 0.6, H * 0.5);
+      const frac = G.timeLeft - Math.floor(G.timeLeft);
+      ctx.font = `800 ${size}px ${FONT_SANS}`;
+      ctx.globalAlpha = 0.12 + (reduced ? 0 : frac * 0.12);
+      ctx.fillStyle = C.rust;
+      ctx.translate(W / 2, H / 2);
+      const s = reduced ? 1 : 1 + frac * 0.15;
+      ctx.scale(s, s);
+      ctx.fillText(String(Math.ceil(G.timeLeft)), 0, size * 0.04);
+    } else {
+      // giant score (or survival seconds) behind the play
+      const size = Math.min(W * 0.55, H * 0.42);
+      const s = 1 + G.scorePop * 0.12;
+      ctx.translate(W / 2, H / 2);
+      ctx.scale(s, s);
+      const txt = G.mode === 'survival' ? String(Math.floor(G.elapsed)) : String(Math.round(G.shownScore));
+      ctx.font = `800 ${size * (txt.length > 3 ? 0.75 : 1)}px ${FONT_SANS}`;
+      ctx.globalAlpha = (0.07 + G.scorePop * 0.12) * (G.bannerT > 0 || G.boss ? 0.25 : 1);
+      ctx.fillStyle = G.scorePop > 0.05 || G.rageT > 0 ? C.rust : C.ink;
+      ctx.fillText(txt, 0, size * 0.04);
     }
+    ctx.restore();
+  }
+
+  function drawGravity() {
+    if (!evOn('gravity')) return;
+    const dir = Math.sign(G.event.ax);
+    ctx.save();
+    ctx.strokeStyle = C.slate;
+    ctx.lineWidth = 2;
+    ctx.globalAlpha = 0.18;
+    const gap = 90;
+    const off = (((G.time * 160 * dir) % gap) + gap) % gap;
+    for (let y = H * 0.2; y < H * 0.85; y += 70) {
+      for (let x = -gap + off; x < W + gap; x += gap) {
+        ctx.beginPath();
+        ctx.moveTo(x - 8 * dir, y - 8); ctx.lineTo(x, y); ctx.lineTo(x - 8 * dir, y + 8);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
   }
 
   // Warm glow on the edge a ball is heading towards, stronger as it gets close.
   function drawDanger() {
-    if (G.state !== 'playing') return;
+    if (G.state !== 'playing' || G.mode === 'duel') return;
     let top = 0, bot = 0;
     for (const b of balls) {
       if (b.serve > 0) continue;
@@ -1073,10 +1990,10 @@
     ctx.lineWidth = 2;
     for (let i = 0; i < 3; i++) {
       const k = (G.time * 0.9 + i / 3) % 1;
-      const r = pad.w * (0.25 + k * 0.5);
       ctx.globalAlpha = (1 - k) * 0.6 * Math.min(1, G.fx.magnet);
-      ctx.beginPath(); ctx.ellipse(pad.x, M.botY, r, r * 0.55, 0, Math.PI, Math.PI * 2); ctx.stroke();
-      ctx.beginPath(); ctx.ellipse(pad.x, M.topY + M.padH, r, r * 0.55, 0, 0, Math.PI); ctx.stroke();
+      const rb = pads.bot.w * (0.25 + k * 0.5), rt = pads.top.w * (0.25 + k * 0.5);
+      ctx.beginPath(); ctx.ellipse(pads.bot.x, M.botY, rb, rb * 0.55, 0, Math.PI, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(pads.top.x, M.topY + M.padH, rt, rt * 0.55, 0, 0, Math.PI); ctx.stroke();
     }
     ctx.restore();
   }
@@ -1085,31 +2002,42 @@
     const g = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.3, W / 2, H / 2, Math.max(W, H) * 0.75);
     g.addColorStop(0, 'rgba(0,0,0,0)');
     g.addColorStop(1, color);
-    ctx.globalAlpha = alpha;
+    ctx.globalAlpha = Math.max(0, alpha);
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, W, H);
     ctx.globalAlpha = 1;
   }
 
-  function drawPaddle(y, state, dir) {
-    const w = pad.w * (1 + state.bump * 0.08);
-    const h = M.padH * (1 - state.bump * 0.25);
-    const by = y + dir * state.bump * 7 + (M.padH - h) / 2;
+  function drawPaddle(y, p, dir) {
+    const w = p.w * (1 + p.bump * 0.08);
+    const h = M.padH * (1 - p.bump * 0.25);
+    const by = y + dir * p.bump * 7 + (M.padH - h) / 2;
     ctx.save();
-    ctx.translate(pad.x, by + h / 2);
-    ctx.rotate(pad.tilt * dir * -1);
+    ctx.translate(p.x, by + h / 2);
+    ctx.rotate(p.tilt * dir * -1);
     ctx.fillStyle = 'rgba(28,27,29,0.18)';
     roundRect(-w / 2 + 3, -h / 2 + 3, w, h, h / 2);
     ctx.fill();
-    ctx.fillStyle = state.flash > 0 ? mix(C.ink, C.rust, state.flash) : C.ink;
+    let body = C.ink;
+    if (G.mode === 'duel' && G.state !== 'menu') body = dir > 0 ? C.ink : C.slate;
+    else if (reversed()) body = C.slate;
+    if (p.stun > 0 && Math.floor(G.time * 12) % 2) body = '#77737a';
+    ctx.fillStyle = p.flash > 0 ? mix(body, C.rust, p.flash) : body;
     roundRect(-w / 2, -h / 2, w, h, h / 2);
     ctx.fill();
-    // sweet-spot marker
-    ctx.fillStyle = state.flash > 0.3 ? C.paper : C.rust;
+    // sweet-spot marker (its colour follows your combo tier)
+    ctx.fillStyle = p.flash > 0.3 ? C.paper : TIER_COLORS[G.rageT > 0 ? 3 : tierIdx(G.streak)];
     ctx.globalAlpha = 0.9;
     roundRect(-w * 0.11, -h * 0.18, w * 0.22, h * 0.36, h * 0.18);
     ctx.fill();
     ctx.globalAlpha = 1;
+    if (reversed()) {
+      ctx.strokeStyle = C.paper; ctx.lineWidth = 1.5;
+      for (const sx of [-1, 1]) {
+        const x0 = sx * w * 0.32;
+        ctx.beginPath(); ctx.moveTo(x0 + sx * 4, -3); ctx.lineTo(x0 - sx * 2, 0); ctx.lineTo(x0 + sx * 4, 3); ctx.stroke();
+      }
+    }
     if (G.fx.wide > 0 || G.fx.shrink > 0) {
       ctx.strokeStyle = G.fx.wide > 0 ? C.sage : C.rust;
       ctx.lineWidth = 2;
@@ -1125,10 +2053,15 @@
     const t = b.trail;
     const n = t.length / 2;
     if (n < 2) return;
-    ctx.fillStyle = G.fx.double > 0 ? C.ember : C.rust;
+    const tier = G.rageT > 0 ? 3 : tierIdx(G.streak);
+    ctx.fillStyle = G.rageT > 0 ? C.rust : G.fx.double > 0 ? C.ember : TIER_COLORS[tier];
     for (let i = 1; i < n; i++) {
       const k = 1 - i / n;
-      ctx.globalAlpha = k * 0.35;
+      if (tier >= 1) { // the glowing halo grows with the combo
+        ctx.globalAlpha = k * 0.12 * tier;
+        ctx.beginPath(); ctx.arc(t[i * 2], t[i * 2 + 1], b.r * (1.2 + tier * 0.5) * k + 1, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.globalAlpha = k * 0.38;
       ctx.beginPath();
       ctx.arc(t[i * 2], t[i * 2 + 1], b.r * (0.25 + 0.75 * k), 0, Math.PI * 2);
       ctx.fill();
@@ -1141,17 +2074,18 @@
     const sp = Math.hypot(b.vx, b.vy);
     const stretch = 1 + clamp(sp / M.baseSpeed - 1, 0, 1.2) * 0.12;
     let grow = 1;
-    if (b.serve > 0) grow = easeOutBack(clamp(1 - b.serve / 0.65, 0, 1));
+    if (b.serve > 0) grow = easeOutBack(clamp(1 - b.serve / (b.serveMax || 0.65), 0, 1));
     else if (b.grow > 0) grow = 1 + b.grow * 0.6;
     const r = b.r * Math.max(0.01, grow);
-    const fire = G.fx.double > 0;
+    const fire = G.fx.double > 0 || G.rageT > 0;
+    const tier = tierIdx(G.streak);
 
     ctx.save();
     ctx.translate(b.x, b.y);
     ctx.scale(1 + b.sq * 0.5, 1 - b.sq * 0.42);
     if (sp > 0) { ctx.rotate(Math.atan2(b.vy, b.vx)); ctx.scale(stretch, 1 / stretch); }
-    ctx.fillStyle = fire ? 'rgba(224,137,47,0.3)' : 'rgba(196,80,42,0.18)';
-    ctx.beginPath(); ctx.arc(0, 0, r * (fire ? 2.6 + Math.sin(G.time * 30) * 0.3 : 2.1), 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = fire ? 'rgba(224,137,47,0.3)' : `rgba(196,80,42,${0.18 + tier * 0.06})`;
+    ctx.beginPath(); ctx.arc(0, 0, r * (fire ? 2.6 + Math.sin(G.time * 30) * 0.3 : 2.1 + tier * 0.3), 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = fire ? C.ember : C.rust;
     ctx.strokeStyle = C.ink;
     ctx.lineWidth = 1.6;
@@ -1164,14 +2098,22 @@
       ctx.strokeStyle = C.ink;
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.arc(b.x, b.y, b.r * 3, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (b.serve / 0.65));
+      ctx.arc(b.x, b.y, b.r * 3, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (b.serve / (b.serveMax || 0.65)));
       ctx.stroke();
     }
+  }
+  // While the ball is invisible, a faint shimmer now and then keeps it fair.
+  function drawGhostHint(b) {
+    if (Math.floor(G.time * 6) % 5) return;
+    ctx.strokeStyle = 'rgba(28,27,29,0.18)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(b.x, b.y, b.r * 1.6, 0, Math.PI * 2); ctx.stroke();
   }
 
   function drawBumper(u) {
     const s = easeOutBack(clamp(u.age / 0.5, 0, 1));
     const r = u.r * s * (1 + u.hit * 0.18);
+    if (r <= 0) return;
     ctx.save();
     ctx.translate(u.x, u.y);
     ctx.fillStyle = 'rgba(28,27,29,0.15)';
@@ -1188,12 +2130,95 @@
     ctx.restore();
   }
 
+  function drawBlock(k) {
+    const a = easeOutBack(clamp(k.age / 0.3, 0, 1));
+    const left = k.life - k.age;
+    if (a <= 0 || (left < 1.2 && Math.floor(left * 8) % 2 === 0)) return;
+    ctx.save();
+    ctx.translate(k.x, k.y);
+    ctx.scale(a, a);
+    ctx.fillStyle = 'rgba(28,27,29,0.15)';
+    roundRect(-k.w / 2 + 3, -k.h / 2 + 4, k.w, k.h, 4); ctx.fill();
+    ctx.fillStyle = C.ink;
+    roundRect(-k.w / 2, -k.h / 2, k.w, k.h, 4); ctx.fill();
+    ctx.strokeStyle = C.rust; ctx.lineWidth = 2;
+    for (let x = -k.w / 2 + 8; x < k.w / 2 - 6; x += 12) { ctx.beginPath(); ctx.moveTo(x, k.h / 2 - 2); ctx.lineTo(x + 6, -k.h / 2 + 2); ctx.stroke(); }
+    ctx.restore();
+  }
+
+  function drawBoss(B) {
+    const appear = easeOutBack(clamp(B.age / 0.8, 0, 1));
+    const wob = reduced ? 0 : Math.sin(B.t * 6) * 0.04;
+    const r = B.r * appear * (1 + B.hurt * 0.12);
+    if (r <= 0) return;
+    ctx.save();
+    ctx.translate(B.x, B.y);
+    ctx.scale(1 + wob, 1 - wob);
+    ctx.fillStyle = 'rgba(28,27,29,0.18)';
+    ctx.beginPath(); ctx.arc(5, 7, r, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = B.hurt > 0 ? mix(C.ink, C.rust, B.hurt) : C.ink;
+    ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = C.rust; ctx.lineWidth = 3;
+    ctx.setLineDash([6, 6]); ctx.lineDashOffset = -B.t * 30;
+    ctx.beginPath(); ctx.arc(0, 0, r + 8, 0, Math.PI * 2); ctx.stroke();
+    ctx.setLineDash([]);
+    // eyes follow the ball
+    const b = balls[0];
+    const look = b ? Math.atan2(b.y - B.y, b.x - B.x) : Math.PI / 2;
+    for (const sx of [-1, 1]) {
+      const ex = sx * r * 0.36, ey = -r * 0.16;
+      ctx.fillStyle = C.paper;
+      ctx.beginPath(); ctx.arc(ex, ey, r * 0.22, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = C.ink;
+      ctx.beginPath(); ctx.arc(ex + Math.cos(look) * r * 0.08, ey + Math.sin(look) * r * 0.08, r * 0.1, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = C.paper; ctx.lineWidth = 3; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(ex - sx * r * 0.22, ey - r * 0.36); ctx.lineTo(ex + sx * r * 0.18, ey - r * 0.24); ctx.stroke();
+    }
+    // mouth opens when attacking
+    const mo = 0.08 + B.mouth * 0.22;
+    ctx.fillStyle = C.rust;
+    ctx.beginPath(); ctx.ellipse(0, r * 0.38, r * 0.34, r * mo, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = C.paper;
+    for (const tx of [-0.18, 0, 0.18]) {
+      ctx.beginPath();
+      ctx.moveTo(r * (tx - 0.06), r * (0.38 - mo)); ctx.lineTo(r * (tx + 0.06), r * (0.38 - mo)); ctx.lineTo(r * tx, r * (0.38 - mo + 0.1));
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function drawProjectile(pr) {
+    ctx.fillStyle = C.rust;
+    for (let i = 3; i >= 0; i--) {
+      ctx.globalAlpha = i ? 0.25 / i : 1;
+      ctx.beginPath(); ctx.arc(pr.x - pr.vx * 0.02 * i, pr.y - pr.vy * 0.02 * i, pr.r * (1 - i * 0.15), 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = C.ink; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(pr.x, pr.y, pr.r, 0, Math.PI * 2); ctx.stroke();
+  }
+
+  function drawNearMark(k) {
+    ctx.save();
+    ctx.globalAlpha = 1 - k.t / 1.2;
+    ctx.strokeStyle = C.rust;
+    ctx.lineWidth = 2;
+    const x1 = Math.min(k.x1, k.x2), x2 = Math.max(k.x1, k.x2);
+    ctx.beginPath();
+    ctx.moveTo(x1, k.y - 8); ctx.lineTo(x1, k.y + 8);
+    ctx.moveTo(x2, k.y - 8); ctx.lineTo(x2, k.y + 8);
+    ctx.moveTo(x1, k.y); ctx.lineTo(x2, k.y);
+    ctx.stroke();
+    ctx.restore();
+  }
+
   function drawTarget(t) {
     const appear = easeOutBack(clamp(t.age / 0.45, 0, 1));
     const remaining = t.life - t.age;
     if (remaining < 1.8 && Math.floor(remaining * 8) % 2 === 0) return; // blink before vanishing
     const pulse = 1 + Math.sin(G.time * (t.def.bad ? 9 : 4) + t.phase) * (t.def.bad ? 0.08 : 0.05);
     const r = t.r * appear * pulse;
+    if (r <= 0) return;
     const bob = Math.sin(G.time * 2 + t.phase) * 4;
     ctx.save();
     ctx.translate(t.x, t.y + bob);
@@ -1317,8 +2342,8 @@
 
   function drawPopup(p) {
     const k = p.t / p.life;
-    const inT = clamp(p.t / 0.18, 0, 1);
-    const s = easeOutBack(inT);
+    const s = easeOutBack(clamp(p.t / 0.18, 0, 1));
+    if (s <= 0) return;
     const y = p.y + (p.y < H / 2 ? 1 : -1) * (1 - Math.pow(1 - k, 2)) * 40; // drift toward centre, away from the HUD
     ctx.save();
     ctx.font = `${p.italic ? 'italic ' : ''}${p.weight} ${p.size}px ${p.font}`;
@@ -1338,7 +2363,7 @@
   }
 
   function roundRect(x, y, w, h, r) {
-    r = Math.min(r, w / 2, h / 2);
+    r = Math.max(0, Math.min(r, w / 2, h / 2));
     ctx.beginPath();
     ctx.moveTo(x + r, y);
     ctx.arcTo(x + w, y, x + w, y + h, r);
@@ -1353,7 +2378,7 @@
     return `rgb(${pa.map((v, i) => Math.round(lerp(v, pb[i], t))).join(',')})`;
   }
 
-  // ---------------------------------------------------------------- loop
+  // ================================================================ loop
   let lastT = performance.now();
   function frame(now) {
     const dt = Math.min(0.05, Math.max(0, (now - lastT) / 1000));
@@ -1363,41 +2388,46 @@
     render();
   }
 
-  // ---------------------------------------------------------------- input
-  window.addEventListener('pointermove', (e) => {
+  // ================================================================ input
+  function pointerTo(e) {
     if (G.state === 'menu') return;
-    targetX = e.clientX;
-  }, { passive: true });
-  canvas.addEventListener('pointerdown', (e) => {
-    if (G.state === 'playing') targetX = e.clientX;
-  });
+    if (G.mode === 'duel') {
+      // Touch: each player drags in their own half. Mouse: always the bottom player.
+      const which = e.pointerType === 'touch' || e.pointerType === 'pen' ? (e.clientY < H / 2 ? 'top' : 'bot') : 'bot';
+      pads[which].targetX = e.clientX;
+    } else {
+      const x = reversed() ? W - e.clientX : e.clientX;
+      for (const p of padList()) p.targetX = x;
+    }
+  }
+  window.addEventListener('pointermove', pointerTo, { passive: true });
+  canvas.addEventListener('pointerdown', (e) => { if (G.state === 'playing') pointerTo(e); });
 
+  const KEYMAP = { a: 'a', A: 'a', d: 'd', D: 'd', ArrowLeft: 'left', ArrowRight: 'right' };
   window.addEventListener('keydown', (e) => {
     if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return; // typing a name
     const k = e.key;
-    const recordsOpen = el.records.classList.contains('show');
-    if (k === 'ArrowLeft' || k === 'a' || k === 'A') { keys.left = true; if (!recordsOpen) e.preventDefault(); }
-    else if (k === 'ArrowRight' || k === 'd' || k === 'D') { keys.right = true; if (!recordsOpen) e.preventDefault(); }
-    else if (k === 'm' || k === 'M') { toggleMute(); }
-    else if (k === 'Escape' && recordsOpen) { closeRecords(); }
-    else if (k === 'p' || k === 'P' || k === 'Escape') {
+    const uiOpen = el.records.classList.contains('show') || el.settings.classList.contains('show');
+    if (KEYMAP[k]) { keys[KEYMAP[k]] = true; if (!uiOpen && G.state === 'playing') e.preventDefault(); return; }
+    if (k === 'm' || k === 'M') { toggleMute(); return; }
+    if (k === 'Escape' && el.records.classList.contains('show')) { closeRecords(); return; }
+    if (k === 'Escape' && el.settings.classList.contains('show')) { closeSettings(); return; }
+    if (k === 'p' || k === 'P' || k === 'Escape') {
       if (G.state === 'playing') pauseGame(); else if (G.state === 'paused') resumeGame();
-    } else if (k === ' ' || k === 'Enter') {
+      return;
+    }
+    if (k === ' ' || k === 'Enter') {
       if (document.activeElement && document.activeElement.tagName === 'BUTTON') return; // let buttons handle it
-      if (recordsOpen) return;
+      if (uiOpen) return;
       e.preventDefault();
       if (G.state === 'menu' || G.state === 'over') startGame();
       else if (G.state === 'paused') resumeGame();
     }
   });
-  window.addEventListener('keyup', (e) => {
-    const k = e.key;
-    if (k === 'ArrowLeft' || k === 'a' || k === 'A') keys.left = false;
-    if (k === 'ArrowRight' || k === 'd' || k === 'D') keys.right = false;
-  });
+  window.addEventListener('keyup', (e) => { if (KEYMAP[e.key]) keys[KEYMAP[e.key]] = false; });
 
   // Pause when the tab or window loses focus.
-  window.addEventListener('blur', () => { keys.left = keys.right = false; pauseGame(); });
+  window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; pauseGame(); });
   document.addEventListener('visibilitychange', () => { if (document.hidden) pauseGame(); else lastT = performance.now(); });
 
   function toggleMute() {
@@ -1407,25 +2437,57 @@
     if (!Sfx.muted) { Sfx.init(); Sfx.click(); }
   }
 
-  $('#btn-play').addEventListener('click', startGame);
-  $('#btn-again').addEventListener('click', startGame);
+  // Mode picker (a radio group with arrow-key support)
+  for (const b of $$('.mode')) {
+    b.addEventListener('click', () => { G.mode = b.dataset.mode; store.set('bib.mode', G.mode); Sfx.init(); Sfx.click(); refreshMenu(); });
+    b.addEventListener('keydown', (e) => {
+      if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const all = $$('.mode');
+      const next = all[(all.indexOf(b) + (e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : all.length - 1)) % all.length];
+      next.click();
+      next.focus();
+    });
+  }
+
+  $('#btn-play').addEventListener('click', () => startGame());
+  $('#btn-again').addEventListener('click', () => startGame());
   $('#btn-resume').addEventListener('click', resumeGame);
   $('#btn-quit').addEventListener('click', toMenu);
   $('#btn-menu').addEventListener('click', toMenu);
   $('#btn-records').addEventListener('click', () => openRecords('board'));
   $('#btn-over-records').addEventListener('click', () => openRecords('board'));
   $('#btn-records-back').addEventListener('click', closeRecords);
+  el.btnShare.addEventListener('click', () => { shareCard().catch(() => shareLabel('Could not create card')); });
+  el.btnSettings.addEventListener('click', (e) => { e.currentTarget.blur(); if (G.state === 'playing') pauseGame(); Sfx.init(); openSettings(); });
+  $('#btn-settings-back').addEventListener('click', closeSettings);
+  for (const b of $$('.pack')) {
+    b.addEventListener('click', () => {
+      Sfx.pack = b.dataset.pack;
+      store.set('bib.pack', Sfx.pack);
+      for (const o of $$('.pack')) o.setAttribute('aria-checked', String(o === b));
+      Sfx.init();
+      [0, 2, 4].forEach((s, i) => setTimeout(() => Sfx.bounce(s, i === 2, 0), i * 140)); // preview
+    });
+  }
+  el.musicToggle.addEventListener('click', () => {
+    Sfx.init();
+    Music.toggle(!Music.on);
+    el.musicToggle.setAttribute('aria-checked', String(Music.on));
+  });
+  for (const b of $$('.board-mode')) b.addEventListener('click', () => { G.boardMode = b.dataset.mode; renderRecords(); });
   el.nameForm.addEventListener('submit', (e) => {
     e.preventDefault();
     commitPending();
     Sfx.click();
     $('#btn-again').focus({ preventScroll: true });
   });
-  for (const t of document.querySelectorAll('[role="tab"]')) {
+  for (const t of $$('[role="tab"]')) {
     t.addEventListener('click', () => selectTab(t.dataset.tab));
     t.addEventListener('keydown', (e) => {
       if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-      const tabs = [...document.querySelectorAll('[role="tab"]')];
+      const tabs = $$('[role="tab"]');
       const next = tabs[(tabs.indexOf(t) + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
       selectTab(next.dataset.tab);
       next.focus();
@@ -1433,27 +2495,26 @@
   }
   el.btnPause.addEventListener('click', pauseGame);
   el.btnMute.addEventListener('click', (e) => { toggleMute(); e.currentTarget.blur(); });
-  for (const b of document.querySelectorAll('.btn')) b.addEventListener('click', () => b.blur());
+  for (const b of $$('.btn')) b.addEventListener('click', () => b.blur());
 
   window.addEventListener('resize', resize);
 
-  // ---------------------------------------------------------------- boot
+  // ================================================================ boot
   resize();
   buildOrbGuide();
   el.btnMute.setAttribute('aria-pressed', String(Sfx.muted));
-  el.menuBest.textContent = G.best;
-  el.menuBadges.textContent = `${earned.size}/${BADGES.length}`;
-  el.best.textContent = G.best;
   balls = [serveBall(1)];
+  refreshMenu();
   setScreen('menu');
   requestAnimationFrame((t) => { lastT = t; frame(t); });
 
   // Small hook for automated checks in the browser console.
   window.__bounce = {
-    G, pad, M, Board, earned,
+    G, pads, M, Boards, bests, earned, Music, Sfx,
     get balls() { return balls; },
     get targets() { return targets; },
     get bumpers() { return bumpers; },
+    startGame, startRage, startEvent, spawnBoss, levelUp, bossAttack,
     // Advance the simulation by `seconds` at 60 fps (works even when the tab is in the background).
     step(seconds, onFrame) {
       for (let i = 0; i < Math.round(seconds * 60); i++) { if (onFrame) onFrame(); update(1 / 60); }

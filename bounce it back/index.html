@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Bounce it Back</title>
-  <meta name="description" content="Bounce it Back: keep the ball alive between two mirrored paddles. A small canvas arcade game by Riya Ann Varghese.">
+  <meta name="description" content="Bounce it Back: keep the ball alive between two mirrored paddles. Combos, Rage mode, bosses, four game modes. A canvas arcade game by Riya Ann Varghese.">
   <meta name="theme-color" content="#f2eee8">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231c1b1d'/%3E%3Crect x='7' y='5' width='18' height='3' rx='1.5' fill='%23f2eee8'/%3E%3Crect x='7' y='24' width='18' height='3' rx='1.5' fill='%23f2eee8'/%3E%3Ccircle cx='16' cy='16' r='4' fill='%23c4502a'/%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -18,17 +18,19 @@
   <!-- Heads-up display -->
   <div class="hud" id="hud" hidden>
     <div class="hud-left">
-      <div class="stat"><span class="label">Score</span><span class="value" id="hud-score">0</span></div>
-      <div class="stat"><span class="label">Level</span><span class="value" id="hud-level">1</span></div>
-      <div class="stat"><span class="label">Speed</span><span class="value" id="hud-speed">1.0×</span></div>
-      <div class="combo" id="hud-combo" hidden>×<span id="hud-mult">2</span></div>
+      <div class="stat" id="s1"><span class="label" id="s1-label">Score</span><span class="value" id="s1-value">0</span></div>
+      <div class="stat" id="s2"><span class="label" id="s2-label">Level</span><span class="value" id="s2-value">1</span></div>
+      <div class="stat" id="s3"><span class="label" id="s3-label">Speed</span><span class="value" id="s3-value">1.0×</span></div>
+      <div class="combo" id="hud-combo" data-tier="0" hidden><b id="hud-mult">×1</b><small id="hud-streak">0 perfect</small><i></i></div>
     </div>
     <div class="hud-right">
-      <div class="stat best"><span class="label">Best</span><span class="value" id="hud-best">0</span></div>
+      <div class="stat best"><span class="label" id="hud-best-label">Best</span><span class="value" id="hud-best">0</span></div>
+      <div class="stat ghost" id="hud-ghost" hidden title="Compared with your best run at this moment"><span class="label">vs PB</span><span class="value" id="hud-ghost-value">+0</span></div>
     </div>
   </div>
 
   <div class="powers" id="powers" aria-live="polite">
+    <div class="chip" data-power="rage" hidden><span>Rage</span><i></i></div>
     <div class="chip" data-power="shield" hidden><span>Shield</span><i></i></div>
     <div class="chip" data-power="wide" hidden><span>Wide</span><i></i></div>
     <div class="chip" data-power="slow" hidden><span>Slow-mo</span><i></i></div>
@@ -37,9 +39,23 @@
     <div class="chip" data-power="shrink" hidden><span>Shrunk!</span><i></i></div>
   </div>
 
+  <div class="event-banner" id="event-banner" hidden aria-live="polite">
+    <small id="event-kicker">Event incoming</small>
+    <b id="event-name">Gravity shift</b>
+    <span id="event-desc">The ball curves sideways</span>
+    <i></i>
+  </div>
+
+  <div class="boss-bar" id="boss-bar" hidden>
+    <small>Boss</small><b id="boss-name">Big Blob</b><i></i>
+  </div>
+
   <div class="controls">
     <button class="icon-btn" id="btn-pause" type="button" aria-label="Pause (P)" title="Pause (P)" hidden>
       <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+    </button>
+    <button class="icon-btn" id="btn-settings" type="button" aria-label="Settings" title="Settings">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="16" cy="7" r="2.5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="10" cy="17" r="2.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>
     </button>
     <button class="icon-btn" id="btn-mute" type="button" aria-label="Mute sound (M)" title="Sound (M)" aria-pressed="false">
       <svg class="on" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z"/><path class="wave" d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12" fill="none" stroke-width="2" stroke-linecap="round"/></svg>
@@ -47,31 +63,38 @@
     </button>
   </div>
 
-  <div class="banner" id="banner" aria-live="polite"><span class="kicker">Level</span><span class="big" id="banner-num">2</span><span class="sub" id="banner-sub">faster now</span></div>
-
+  <div class="banner" id="banner" aria-live="polite"><span class="kicker" id="banner-kicker">Level</span><span class="big" id="banner-num">2</span><span class="sub" id="banner-sub">faster now</span></div>
+  <div class="announce" id="announce" aria-live="assertive"></div>
   <div class="toasts" id="toasts" aria-live="polite"></div>
 
   <!-- Start screen -->
   <section class="screen show" id="screen-menu" aria-labelledby="title">
     <div class="card">
-      <p class="eyebrow">An arcade game · v3</p>
+      <p class="eyebrow">An arcade game · v4</p>
       <h1 id="title" class="title"><span>Bounce</span> <em>it</em> <span>Back</span></h1>
-      <p class="lede">Two mirrored paddles. One restless ball that gets faster every level. Hit it dead-centre to build a combo, and steer it through orbs for power-ups.</p>
-      <button class="btn primary" id="btn-play" type="button">Play <kbd>Space</kbd></button>
-      <button class="btn ghost" id="btn-records" type="button">Leaderboard, badges &amp; orbs</button>
+      <div class="modes" role="radiogroup" aria-label="Game mode">
+        <button class="mode" type="button" role="radio" data-mode="classic" aria-checked="true"><b>Classic</b><small>Levels, orbs, events &amp; bosses</small><span class="mode-best"></span></button>
+        <button class="mode" type="button" role="radio" data-mode="survival" aria-checked="false"><b>Survival</b><small>No breaks. Always faster.</small><span class="mode-best"></span></button>
+        <button class="mode" type="button" role="radio" data-mode="rush" aria-checked="false"><b>60-second rush</b><small>Max points in a minute</small><span class="mode-best"></span></button>
+        <button class="mode" type="button" role="radio" data-mode="duel" aria-checked="false"><b>Two players</b><small>Top vs bottom, first to 5</small><span class="mode-best"></span></button>
+      </div>
+      <button class="btn primary" id="btn-play" type="button"><span id="btn-play-label">Play Classic</span> <kbd>Space</kbd></button>
+      <button class="btn ghost" id="btn-records" type="button">Hall of fame: leaderboards, badges &amp; orbs</button>
       <ul class="howto">
         <li><b>Move</b> mouse, drag, or <kbd>←</kbd><kbd>→</kbd> / <kbd>A</kbd><kbd>D</kbd></li>
-        <li><b>Pause</b> <kbd>P</kbd> or <kbd>Esc</kbd> · <b class="inline">Sound</b> <kbd>M</kbd></li>
-        <li><b>Orbs</b> most help, but the dark <span class="dot shrink"></span> one shrinks you</li>
+        <li><b>Combo</b> centre hits in a row: 5 → ×2, 10 → ×3, 20 → ×5 + <strong>Rage mode</strong></li>
+        <li><b>2P</b> bottom: <kbd>A</kbd><kbd>D</kbd> or mouse · top: <kbd>←</kbd><kbd>→</kbd> · or drag in your half</li>
       </ul>
-      <p class="best-line">Best <span id="menu-best">0</span> · Badges <span id="menu-badges">0/12</span></p>
+      <p class="best-line"><span id="menu-title">Rookie</span> · Badges <span id="menu-badges">0/26</span></p>
     </div>
   </section>
 
   <!-- Pause screen -->
   <section class="screen" id="screen-pause" aria-labelledby="pause-title">
     <div class="card small">
+      <p class="eyebrow" id="pause-mode">Classic</p>
       <h2 id="pause-title" class="title"><em>Paused</em></h2>
+      <dl class="stats pause-stats" id="pause-stats"></dl>
       <button class="btn primary" id="btn-resume" type="button">Resume <kbd>P</kbd></button>
       <button class="btn ghost" id="btn-quit" type="button">Quit to menu</button>
     </div>
@@ -80,18 +103,14 @@
   <!-- Game over screen -->
   <section class="screen" id="screen-over" aria-labelledby="over-title">
     <div class="card">
-      <p class="eyebrow">Game over</p>
+      <p class="eyebrow" id="over-eyebrow">Game over</p>
       <h2 id="over-title" class="title"><em>Missed it.</em></h2>
       <div class="final">
         <span class="final-score" id="over-score">0</span>
+        <span class="final-unit" id="over-unit">points</span>
         <span class="new-best" id="over-newbest" hidden>New best!</span>
       </div>
-      <dl class="stats">
-        <div><dt>Best</dt><dd id="over-best">0</dd></div>
-        <div><dt>Level</dt><dd id="over-level">1</dd></div>
-        <div><dt>Bounces</dt><dd id="over-hits">0</dd></div>
-        <div><dt>Top combo</dt><dd id="over-combo">×1</dd></div>
-      </dl>
+      <dl class="stats" id="over-stats"></dl>
       <form class="name-form" id="name-form" hidden>
         <label for="name-input">You placed <b id="over-rank">#1</b>! Sign the leaderboard</label>
         <div class="row">
@@ -101,35 +120,63 @@
       </form>
       <p class="rank-line" id="rank-line" hidden></p>
       <button class="btn primary" id="btn-again" type="button">Play again <kbd>Space</kbd></button>
+      <button class="btn share" id="btn-share" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 8l5-5 5 5M5 14v5h14v-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Share score card</span></button>
       <div class="btn-row">
-        <button class="btn ghost" id="btn-over-records" type="button">Leaderboard</button>
+        <button class="btn ghost" id="btn-over-records" type="button">Hall of fame</button>
         <button class="btn ghost" id="btn-menu" type="button">Menu</button>
       </div>
     </div>
   </section>
 
-  <!-- Records: leaderboard, badges, orb guide -->
+  <!-- Records: leaderboards, badges, orb guide -->
   <section class="screen" id="screen-records" aria-labelledby="records-title">
     <div class="card wide">
       <h2 id="records-title" class="title"><em>Hall of fame</em></h2>
       <div class="tabs" role="tablist" aria-label="Records">
         <button role="tab" type="button" id="tab-board" data-tab="board" aria-controls="panel-board" aria-selected="true">Top 10</button>
-        <button role="tab" type="button" id="tab-badges" data-tab="badges" aria-controls="panel-badges" aria-selected="false" tabindex="-1">Badges <span id="badge-count">0/12</span></button>
+        <button role="tab" type="button" id="tab-badges" data-tab="badges" aria-controls="panel-badges" aria-selected="false" tabindex="-1">Badges <span id="badge-count">0/26</span></button>
         <button role="tab" type="button" id="tab-orbs" data-tab="orbs" aria-controls="panel-orbs" aria-selected="false" tabindex="-1">Orbs</button>
       </div>
       <div class="panel" id="panel-board" role="tabpanel" aria-labelledby="tab-board">
+        <div class="seg" role="group" aria-label="Leaderboard mode">
+          <button class="board-mode" type="button" data-mode="classic" aria-pressed="true">Classic</button>
+          <button class="board-mode" type="button" data-mode="survival" aria-pressed="false">Survival</button>
+          <button class="board-mode" type="button" data-mode="rush" aria-pressed="false">Rush</button>
+        </div>
         <ol class="board" id="board-list"></ol>
         <p class="empty" id="board-empty">No scores yet. Go set one!</p>
         <p class="note">Scores are saved in this browser.</p>
       </div>
       <div class="panel" id="panel-badges" role="tabpanel" aria-labelledby="tab-badges" hidden>
+        <p class="title-line" id="title-line">Your title: Rookie</p>
         <div class="badges" id="badge-grid"></div>
       </div>
       <div class="panel" id="panel-orbs" role="tabpanel" aria-labelledby="tab-orbs" hidden>
         <div class="orbs" id="orb-grid"></div>
-        <p class="note">From level 3, bumpers drift across the court. Bounce off them for points.</p>
+        <p class="note">Classic also has bumpers from level 3, random events from level 2 and a boss every 5 levels.</p>
       </div>
       <button class="btn primary" id="btn-records-back" type="button">Back</button>
+    </div>
+  </section>
+
+  <!-- Settings -->
+  <section class="screen" id="screen-settings" aria-labelledby="settings-title">
+    <div class="card small">
+      <h2 id="settings-title" class="title"><em>Settings</em></h2>
+      <div class="setting">
+        <span class="setting-label" id="pack-label">Sound pack</span>
+        <div class="seg" role="radiogroup" aria-labelledby="pack-label">
+          <button class="pack" type="button" role="radio" data-pack="classic" aria-checked="true">Classic</button>
+          <button class="pack" type="button" role="radio" data-pack="chiptune" aria-checked="false">Chiptune</button>
+          <button class="pack" type="button" role="radio" data-pack="soft" aria-checked="false">Soft</button>
+        </div>
+      </div>
+      <div class="setting row">
+        <span class="setting-label" id="music-label">Background music</span>
+        <button class="switch" id="music-toggle" type="button" role="switch" aria-checked="true" aria-labelledby="music-label"><i></i></button>
+      </div>
+      <p class="note">Press <kbd>M</kbd> any time to mute everything.</p>
+      <button class="btn primary" id="btn-settings-back" type="button">Done</button>
     </div>
   </section>
 
