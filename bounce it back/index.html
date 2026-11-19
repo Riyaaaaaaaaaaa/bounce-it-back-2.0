@@ -20,6 +20,7 @@
     <div class="hud-left">
       <div class="stat"><span class="label">Score</span><span class="value" id="hud-score">0</span></div>
       <div class="stat"><span class="label">Level</span><span class="value" id="hud-level">1</span></div>
+      <div class="stat"><span class="label">Speed</span><span class="value" id="hud-speed">1.0×</span></div>
       <div class="combo" id="hud-combo" hidden>×<span id="hud-mult">2</span></div>
     </div>
     <div class="hud-right">
@@ -28,8 +29,12 @@
   </div>
 
   <div class="powers" id="powers" aria-live="polite">
+    <div class="chip" data-power="shield" hidden><span>Shield</span><i></i></div>
     <div class="chip" data-power="wide" hidden><span>Wide</span><i></i></div>
     <div class="chip" data-power="slow" hidden><span>Slow-mo</span><i></i></div>
+    <div class="chip" data-power="magnet" hidden><span>Magnet</span><i></i></div>
+    <div class="chip" data-power="double" hidden><span>Double</span><i></i></div>
+    <div class="chip" data-power="shrink" hidden><span>Shrunk!</span><i></i></div>
   </div>
 
   <div class="controls">
@@ -42,21 +47,24 @@
     </button>
   </div>
 
-  <div class="banner" id="banner" aria-live="polite"><span class="kicker">Level</span><span class="big" id="banner-num">2</span><span class="sub">faster now</span></div>
+  <div class="banner" id="banner" aria-live="polite"><span class="kicker">Level</span><span class="big" id="banner-num">2</span><span class="sub" id="banner-sub">faster now</span></div>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
 
   <!-- Start screen -->
   <section class="screen show" id="screen-menu" aria-labelledby="title">
     <div class="card">
-      <p class="eyebrow">An arcade game · v2</p>
+      <p class="eyebrow">An arcade game · v3</p>
       <h1 id="title" class="title"><span>Bounce</span> <em>it</em> <span>Back</span></h1>
-      <p class="lede">Two mirrored paddles. One restless ball. Keep it in play: every bounce scores, and dead-centre hits build a combo.</p>
+      <p class="lede">Two mirrored paddles. One restless ball that gets faster every level. Hit it dead-centre to build a combo, and steer it through orbs for power-ups.</p>
       <button class="btn primary" id="btn-play" type="button">Play <kbd>Space</kbd></button>
+      <button class="btn ghost" id="btn-records" type="button">Leaderboard, badges &amp; orbs</button>
       <ul class="howto">
         <li><b>Move</b> mouse, drag, or <kbd>←</kbd><kbd>→</kbd> / <kbd>A</kbd><kbd>D</kbd></li>
-        <li><b>Pause</b> <kbd>P</kbd> or <kbd>Esc</kbd> · <b>Sound</b> <kbd>M</kbd></li>
-        <li><b>Orbs</b> <span class="dot star"></span>+5 <span class="dot wide"></span>wide <span class="dot multi"></span>multi-ball <span class="dot slow"></span>slow-mo</li>
+        <li><b>Pause</b> <kbd>P</kbd> or <kbd>Esc</kbd> · <b class="inline">Sound</b> <kbd>M</kbd></li>
+        <li><b>Orbs</b> most help, but the dark <span class="dot shrink"></span> one shrinks you</li>
       </ul>
-      <p class="best-line">Best <span id="menu-best">0</span></p>
+      <p class="best-line">Best <span id="menu-best">0</span> · Badges <span id="menu-badges">0/12</span></p>
     </div>
   </section>
 
@@ -84,8 +92,44 @@
         <div><dt>Bounces</dt><dd id="over-hits">0</dd></div>
         <div><dt>Top combo</dt><dd id="over-combo">×1</dd></div>
       </dl>
+      <form class="name-form" id="name-form" hidden>
+        <label for="name-input">You placed <b id="over-rank">#1</b>! Sign the leaderboard</label>
+        <div class="row">
+          <input id="name-input" name="name" maxlength="12" autocomplete="nickname" spellcheck="false" placeholder="Your name" enterkeyhint="done">
+          <button class="btn small" type="submit">Save</button>
+        </div>
+      </form>
+      <p class="rank-line" id="rank-line" hidden></p>
       <button class="btn primary" id="btn-again" type="button">Play again <kbd>Space</kbd></button>
-      <button class="btn ghost" id="btn-menu" type="button">Menu</button>
+      <div class="btn-row">
+        <button class="btn ghost" id="btn-over-records" type="button">Leaderboard</button>
+        <button class="btn ghost" id="btn-menu" type="button">Menu</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Records: leaderboard, badges, orb guide -->
+  <section class="screen" id="screen-records" aria-labelledby="records-title">
+    <div class="card wide">
+      <h2 id="records-title" class="title"><em>Hall of fame</em></h2>
+      <div class="tabs" role="tablist" aria-label="Records">
+        <button role="tab" type="button" id="tab-board" data-tab="board" aria-controls="panel-board" aria-selected="true">Top 10</button>
+        <button role="tab" type="button" id="tab-badges" data-tab="badges" aria-controls="panel-badges" aria-selected="false" tabindex="-1">Badges <span id="badge-count">0/12</span></button>
+        <button role="tab" type="button" id="tab-orbs" data-tab="orbs" aria-controls="panel-orbs" aria-selected="false" tabindex="-1">Orbs</button>
+      </div>
+      <div class="panel" id="panel-board" role="tabpanel" aria-labelledby="tab-board">
+        <ol class="board" id="board-list"></ol>
+        <p class="empty" id="board-empty">No scores yet. Go set one!</p>
+        <p class="note">Scores are saved in this browser.</p>
+      </div>
+      <div class="panel" id="panel-badges" role="tabpanel" aria-labelledby="tab-badges" hidden>
+        <div class="badges" id="badge-grid"></div>
+      </div>
+      <div class="panel" id="panel-orbs" role="tabpanel" aria-labelledby="tab-orbs" hidden>
+        <div class="orbs" id="orb-grid"></div>
+        <p class="note">From level 3, bumpers drift across the court. Bounce off them for points.</p>
+      </div>
+      <button class="btn primary" id="btn-records-back" type="button">Back</button>
     </div>
   </section>
 
