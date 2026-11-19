@@ -2,6 +2,8 @@
 
 A small arcade game for the browser. Two mirrored paddles, one at the top and one at the bottom, move together. Keep the ball between them: every bounce scores, perfect centre hits build combos up to Rage mode, and one miss ends the run.
 
+**Play:** https://riyaaaaaaaaaaa.github.io/bounce-it-back-2.0/
+
 The sequel to [Bounce it Back](https://github.com/Riyaaaaaaaaaaa/bounce-it-back-game), the paddle game I built in May–June 2025. The original stays as it was, and 2.0 is its own project.
 
 Plain HTML, CSS and JavaScript on a `<canvas>`. There's no build step, no libraries and no asset files, and all the sound is generated in the browser.
