@@ -47,7 +47,7 @@
   </div>
 
   <div class="boss-bar" id="boss-bar" hidden>
-    <small>Boss</small><b id="boss-name">Big Blob</b><i></i>
+    <small id="boss-kind">Boss</small><b id="boss-name">Big Blob</b><i></i>
   </div>
 
   <div class="controls">
@@ -76,16 +76,20 @@
         <button class="mode" type="button" role="radio" data-mode="classic" aria-checked="true"><b>Classic</b><small>Levels, orbs, events &amp; bosses</small><span class="mode-best"></span></button>
         <button class="mode" type="button" role="radio" data-mode="survival" aria-checked="false"><b>Survival</b><small>No breaks. Always faster.</small><span class="mode-best"></span></button>
         <button class="mode" type="button" role="radio" data-mode="rush" aria-checked="false"><b>60-second rush</b><small>Max points in a minute</small><span class="mode-best"></span></button>
+        <button class="mode" type="button" role="radio" data-mode="bossrush" aria-checked="false"><b>Boss rush</b><small>Boss after boss, tougher each time</small><span class="mode-best"></span></button>
         <button class="mode" type="button" role="radio" data-mode="duel" aria-checked="false"><b>Two players</b><small>Top vs bottom, first to 5</small><span class="mode-best"></span></button>
       </div>
       <button class="btn primary" id="btn-play" type="button"><span id="btn-play-label">Play Classic</span> <kbd>Space</kbd></button>
-      <button class="btn ghost" id="btn-records" type="button">Hall of fame: leaderboards, badges &amp; orbs</button>
+      <div class="btn-row">
+        <button class="btn ghost" id="btn-records" type="button">Hall of fame</button>
+        <button class="btn ghost" id="btn-locker" type="button">Locker <span class="locker-dot" hidden></span></button>
+      </div>
       <ul class="howto">
         <li><b>Move</b> mouse, drag, or <kbd>←</kbd><kbd>→</kbd> / <kbd>A</kbd><kbd>D</kbd></li>
         <li><b>Combo</b> centre hits in a row: 5 → ×2, 10 → ×3, 20 → ×5 + <strong>Rage mode</strong></li>
         <li><b>2P</b> bottom: <kbd>A</kbd><kbd>D</kbd> or mouse · top: <kbd>←</kbd><kbd>→</kbd> · or drag in your half</li>
       </ul>
-      <p class="best-line"><span id="menu-title">Rookie</span> · Badges <span id="menu-badges">0/26</span></p>
+      <p class="best-line"><span id="menu-title">Rookie</span> · Badges <span id="menu-badges">0/28</span></p>
     </div>
   </section>
 
@@ -123,6 +127,7 @@
       <button class="btn share" id="btn-share" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 8l5-5 5 5M5 14v5h14v-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Share score card</span></button>
       <div class="btn-row">
         <button class="btn ghost" id="btn-over-records" type="button">Hall of fame</button>
+        <button class="btn ghost" id="btn-over-locker" type="button">Locker <span class="locker-dot" hidden></span></button>
         <button class="btn ghost" id="btn-menu" type="button">Menu</button>
       </div>
     </div>
@@ -134,7 +139,7 @@
       <h2 id="records-title" class="title"><em>Hall of fame</em></h2>
       <div class="tabs" role="tablist" aria-label="Records">
         <button role="tab" type="button" id="tab-board" data-tab="board" aria-controls="panel-board" aria-selected="true">Top 10</button>
-        <button role="tab" type="button" id="tab-badges" data-tab="badges" aria-controls="panel-badges" aria-selected="false" tabindex="-1">Badges <span id="badge-count">0/26</span></button>
+        <button role="tab" type="button" id="tab-badges" data-tab="badges" aria-controls="panel-badges" aria-selected="false" tabindex="-1">Badges <span id="badge-count">0/28</span></button>
         <button role="tab" type="button" id="tab-orbs" data-tab="orbs" aria-controls="panel-orbs" aria-selected="false" tabindex="-1">Orbs</button>
       </div>
       <div class="panel" id="panel-board" role="tabpanel" aria-labelledby="tab-board">
@@ -142,6 +147,7 @@
           <button class="board-mode" type="button" data-mode="classic" aria-pressed="true">Classic</button>
           <button class="board-mode" type="button" data-mode="survival" aria-pressed="false">Survival</button>
           <button class="board-mode" type="button" data-mode="rush" aria-pressed="false">Rush</button>
+          <button class="board-mode" type="button" data-mode="bossrush" aria-pressed="false">Boss rush</button>
         </div>
         <ol class="board" id="board-list"></ol>
         <p class="empty" id="board-empty">No scores yet. Go set one!</p>
@@ -153,9 +159,26 @@
       </div>
       <div class="panel" id="panel-orbs" role="tabpanel" aria-labelledby="tab-orbs" hidden>
         <div class="orbs" id="orb-grid"></div>
-        <p class="note">Classic also has bumpers from level 3, random events from level 2 and a boss every 5 levels.</p>
+        <p class="note">Classic also has a mini-boss at level 2, a boss every 3 levels, bumpers from level 3 and random events from level 2.</p>
       </div>
       <button class="btn primary" id="btn-records-back" type="button">Back</button>
+    </div>
+  </section>
+
+  <!-- Locker: cosmetics unlocked through play -->
+  <section class="screen" id="screen-locker" aria-labelledby="locker-title">
+    <div class="card wide">
+      <h2 id="locker-title" class="title"><em>Locker</em></h2>
+      <p class="locker-note">Looks only: nothing here changes how the game plays. Earn badges and keep playing to unlock more. <b id="locker-count"></b></p>
+      <div class="seg" role="group" aria-label="Category">
+        <button class="locker-cat" type="button" data-cat="ball" aria-pressed="true">Ball</button>
+        <button class="locker-cat" type="button" data-cat="paddle" aria-pressed="false">Paddle</button>
+        <button class="locker-cat" type="button" data-cat="trail" aria-pressed="false">Trail</button>
+        <button class="locker-cat" type="button" data-cat="theme" aria-pressed="false">Theme</button>
+        <button class="locker-cat" type="button" data-cat="effect" aria-pressed="false">Bounce</button>
+      </div>
+      <div class="locker-grid" id="locker-grid"></div>
+      <button class="btn primary" id="btn-locker-back" type="button">Done</button>
     </div>
   </section>
 

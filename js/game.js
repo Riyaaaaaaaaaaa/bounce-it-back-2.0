@@ -57,6 +57,7 @@
     classic:  { name: 'Classic', desc: 'Levels, orbs, random events, and a boss every 5 levels.', unit: 'points' },
     survival: { name: 'Survival', desc: 'No levels, no orbs, no breaks. It just keeps getting faster.', unit: 'survived' },
     rush:     { name: '60-second rush', desc: 'Score as much as you can in 60 seconds. A miss costs 3 s.', unit: 'points in 60 s' },
+    bossrush: { name: 'Boss rush', desc: 'Boss after boss, each one tougher. How many can you beat?', unit: 'bosses beaten' },
     duel:     { name: 'Two players', desc: 'Top vs bottom on one screen. First to 5 points wins.', unit: '' },
   };
   const validMode = (m) => (MODES[m] ? m : 'classic');
@@ -93,13 +94,13 @@
   const TIER_COLORS = [C.rust, C.ember, C.gold, C.rust];
 
   const UNLOCKS = {
-    2: 'new orbs: multi-ball & slow-mo · events begin',
-    3: 'bumpers appear · magnet & double',
     4: 'careful: shrink orbs now spawn',
-    6: 'a second bumper joins in',
   };
 
+  // Classic: a mini-boss at level 2, then a boss every 3 levels with mini-bosses in between (2, 3, 5, 6, 8, 9…).
+  const bossKindForLevel = (l) => (l % 3 === 0 ? 'boss' : l % 3 === 2 ? 'mini' : null);
   const BOSS_NAMES = ['Big Blob', 'Grumbles', 'The Smudge', 'Count Bounceula', 'Mega Pebble'];
+  const MINI_NAMES = ['Blobling', 'Smudgelet', 'Pebble Jr.', 'Grumblet'];
 
   const BADGES = [
     { id: 'bullseye', icon: '◎', name: 'Bullseye', desc: 'Land a perfect centre hit' },
@@ -128,6 +129,8 @@
     { id: 'tiny', icon: '▭', name: 'Tiny but mighty', desc: 'Make 5 bounces while shrunk' },
     { id: 'purist', icon: '○', name: 'Purist', desc: 'Reach level 4 without collecting an orb' },
     { id: 'duel', icon: 'vs', name: 'Friendly rivals', desc: 'Finish a two-player match' },
+    { id: 'gauntlet', icon: '⚔', name: 'Gauntlet', desc: 'Beat 3 bosses in Boss rush' },
+    { id: 'monster', icon: '♛', name: 'Monster hunter', desc: 'Beat 6 bosses in Boss rush' },
   ];
   const TITLES = [
     { at: 0, name: 'Rookie' }, { at: 3, name: 'Rallier' }, { at: 7, name: 'Ace' },
@@ -141,9 +144,74 @@
     soft:     { name: 'Soft',     wave: 'sine',     base: 196, scale: [0, 3, 5, 7, 10], vol: 1.25, partial: 4 },
   };
 
-  const LEVEL_TINTS = [C.paper, C.sand, C.rose, C.sage, C.mist].map((c, i) => mixRgb(hexRgb(C.paper), hexRgb(c), i ? 0.32 : 0));
-  const RAGE_TINT = mixRgb(hexRgb(C.paper), hexRgb(C.rust), 0.36);
-  const DUEL_TINT = mixRgb(hexRgb(C.paper), hexRgb(C.mist), 0.2);
+  // ================================================================ cosmetics (the Locker)
+  // Purely visual: none of these change how the game plays. Each unlocks through a badge or lifetime stats.
+  const COSMETICS = {
+    ball: { label: 'Ball', noun: 'ball', items: [
+      { id: 'classic', name: 'Classic' },
+      { id: 'ring', name: 'Ringed', badge: 'bullseye' },
+      { id: 'beach', name: 'Beach ball', games: 5 },
+      { id: 'glow', name: 'Ember glow', badge: 'rage' },
+      { id: 'pixel', name: 'Pixel', bounces: 500 },
+      { id: 'star', name: 'Star', badge: 'boss' },
+      { id: 'eye', name: 'Eyeball', bosses: 5 },
+    ] },
+    paddle: { label: 'Paddle', noun: 'paddles', items: [
+      { id: 'ink', name: 'Ink' },
+      { id: 'candy', name: 'Candy stripe', badge: 'streak' },
+      { id: 'neon', name: 'Neon', badge: 'lvl5' },
+      { id: 'wood', name: 'Wood grain', bounces: 1000 },
+      { id: 'sunset', name: 'Sunset', badge: 's500' },
+      { id: 'gold', name: 'Gold', badgesCount: 18 },
+    ] },
+    trail: { label: 'Trail', noun: 'trail', items: [
+      { id: 'dots', name: 'Dots' },
+      { id: 'sparkle', name: 'Sparkles', badge: 'perfect10' },
+      { id: 'ribbon', name: 'Ribbon', badge: 'survive60' },
+      { id: 'smoke', name: 'Smoke', badge: 'rush100' },
+      { id: 'hearts', name: 'Hearts', badge: 'duel' },
+    ] },
+    theme: { label: 'Theme', noun: 'theme', items: [
+      { id: 'paper', name: 'Paper' },
+      { id: 'mint', name: 'Mint', badge: 'collector' },
+      { id: 'sunset', name: 'Sunset', badge: 'rageSurvive' },
+      { id: 'blueprint', name: 'Blueprint', badge: 'pinball' },
+      { id: 'midnight', name: 'Midnight', badge: 'clutch' },
+    ] },
+    effect: { label: 'Bounce', noun: 'bounce effect', items: [
+      { id: 'sparks', name: 'Sparks' },
+      { id: 'confetti', name: 'Confetti pop', badge: 's100' },
+      { id: 'ripple', name: 'Ripple', games: 10 },
+      { id: 'ink', name: 'Ink splash', badge: 'saved' },
+      { id: 'stars', name: 'Starburst', badge: 'bounce100' },
+    ] },
+  };
+  const THEMES = {
+    paper:     { bg: C.paper,   dot: 'rgba(28,27,29,0.07)',   line: 'rgba(28,27,29,0.10)' },
+    mint:      { bg: '#dcebdf', dot: 'rgba(28,27,29,0.08)',   line: 'rgba(28,27,29,0.12)' },
+    sunset:    { bg: '#f6dfcc', bg2: '#e6b3a6', dot: 'rgba(28,27,29,0.07)', line: 'rgba(28,27,29,0.10)' },
+    blueprint: { bg: '#2c4870', dot: 'rgba(242,238,232,0.13)', line: 'rgba(242,238,232,0.28)', dark: true, grid: true },
+    midnight:  { bg: '#16171e', dot: 'rgba(242,238,232,0.55)', line: 'rgba(242,238,232,0.14)', dark: true, stars: true },
+  };
+  const lifetime = (() => {
+    const raw = store.get('bib.stats', {}) || {};
+    const o = {};
+    for (const k of ['games', 'bounces', 'perfects', 'bosses']) o[k] = Math.max(0, Math.floor(+raw[k] || 0));
+    return o;
+  })();
+  const equip = (() => {
+    const raw = store.get('bib.equip', {}) || {};
+    const o = {};
+    for (const [cat, g] of Object.entries(COSMETICS)) o[cat] = g.items.some((i) => i.id === raw[cat]) ? raw[cat] : g.items[0].id;
+    return o;
+  })();
+  const theme = () => THEMES[equip.theme];
+  const fg = () => (theme().dark ? C.paper : C.ink); // the "ink" colour for the current theme
+  const TINT_COLORS = [null, C.sand, C.rose, C.sage, C.mist];
+  const themeBg = () => hexRgb(theme().bg);
+  const levelTint = (i) => { const c = TINT_COLORS[((i % 5) + 5) % 5]; return c ? mixRgb(themeBg(), hexRgb(c), theme().dark ? 0.1 : 0.32) : themeBg(); };
+  const rageTint = () => mixRgb(themeBg(), hexRgb(C.rust), 0.36);
+  const duelTint = () => mixRgb(themeBg(), hexRgb(C.mist), theme().dark ? 0.1 : 0.2);
 
   // ================================================================ DOM
   const canvas = $('#game');
@@ -171,6 +239,8 @@
     toasts: $('#toasts'),
     btnPause: $('#btn-pause'), btnMute: $('#btn-mute'), btnSettings: $('#btn-settings'),
     musicToggle: $('#music-toggle'),
+    locker: $('#screen-locker'), lockerGrid: $('#locker-grid'), lockerCount: $('#locker-count'),
+    bossKind: $('#boss-kind'),
   };
   const restartAnim = (node, cls) => { node.classList.remove(cls); void node.offsetWidth; node.classList.add(cls); };
   const bump = (node) => restartAnim(node, 'bump');
@@ -344,7 +414,7 @@
       .sort((a, b) => b.score - a.score)
       .slice(0, 10);
   }
-  const Boards = { classic: loadBoard('classic'), survival: loadBoard('survival'), rush: loadBoard('rush') };
+  const Boards = { classic: loadBoard('classic'), survival: loadBoard('survival'), rush: loadBoard('rush'), bossrush: loadBoard('bossrush') };
   const bests = {};
   for (const m of Object.keys(Boards)) bests[m] = Math.max(+store.get(bestKey(m), 0) || 0, Boards[m][0] ? Boards[m][0].score : 0);
   const qualifies = (m, score) => !!Boards[m] && score > 0 && (Boards[m].length < 10 || score > Boards[m][Boards[m].length - 1].score);
@@ -371,6 +441,46 @@
     if (badge) queueToast({ icon: badge.icon, kicker: 'Badge unlocked', name: badge.name });
     const after = currentTitle();
     if (after !== before) queueToast({ icon: '★', kicker: 'New title', name: after });
+    checkUnlocks();
+  }
+
+  const knownUnlocks = new Set((store.get('bib.unlocked', []) || []).filter((k) => typeof k === 'string'));
+  function itemUnlocked(item) {
+    if (item.badge) return earned.has(item.badge);
+    if (item.games) return lifetime.games >= item.games;
+    if (item.bounces) return lifetime.bounces >= item.bounces;
+    if (item.bosses) return lifetime.bosses >= item.bosses;
+    if (item.badgesCount) return earned.size >= item.badgesCount;
+    return true;
+  }
+  function reqText(item) {
+    if (item.badge) { const b = BADGES.find((x) => x.id === item.badge); return `Earn \u201c${b ? b.name : item.badge}\u201d: ${b ? b.desc.charAt(0).toLowerCase() + b.desc.slice(1) : ''}`; }
+    if (item.games) return `Play ${item.games} games`;
+    if (item.bounces) return `${item.bounces.toLocaleString()} bounces in total (${lifetime.bounces.toLocaleString()} so far)`;
+    if (item.bosses) return `Beat ${item.bosses} bosses in total (${lifetime.bosses} so far)`;
+    if (item.badgesCount) return `Earn ${item.badgesCount} badges (${earned.size} so far)`;
+    return '';
+  }
+  // Announce newly unlocked cosmetics (silent on first boot, so old progress doesn't spam toasts).
+  function checkUnlocks(silent) {
+    let fresh = false;
+    for (const [cat, g] of Object.entries(COSMETICS)) {
+      for (const item of g.items) {
+        const key = cat + ':' + item.id;
+        if (knownUnlocks.has(key) || !itemUnlocked(item)) continue;
+        knownUnlocks.add(key);
+        if (item === g.items[0] || silent) continue;
+        fresh = true;
+        queueToast({ icon: '✧', kicker: 'Locker unlock', name: `${item.name} ${g.noun}` });
+      }
+    }
+    store.set('bib.unlocked', [...knownUnlocks]);
+    if (fresh) store.set('bib.lockerNew', true);
+    updateLockerDot();
+  }
+  function updateLockerDot() {
+    const on = !!store.get('bib.lockerNew', false);
+    for (const d of $$('.locker-dot')) d.hidden = !on;
   }
   function queueToast(t) { toastQueue.push(t); if (toastQueue.length === 1) showToast(); }
   function showToast() {
@@ -425,7 +535,7 @@
     for (const b of balls) { b.r = M.ballR; b.x = clamp(b.x, b.r, W - b.r); b.y = clamp(b.y, M.topY, M.botY); }
     for (const t of targets) { t.r = M.ballR * 2.6; t.x = clamp(t.x, t.r, W - t.r); t.y = clamp(t.y, H * 0.25, H * 0.75); }
     for (const u of bumpers) { u.r = M.ballR * 3.2; u.y = u.yFrac * H; u.x = clamp(u.x, u.r + 10, W - u.r - 10); }
-    if (G.boss) { G.boss.r = bossRadius(); }
+    if (G.boss) { G.boss.r = bossRadius() * (G.boss.mini ? 0.7 : 1); }
   }
 
   // ================================================================ state
@@ -439,7 +549,7 @@
     fx: { wide: 0, slow: 0, magnet: 0, double: 0, shrink: 0 },
     shield: 0, spawnT: 4,
     event: null, eventT: 14, lastEvent: '',
-    boss: null, bossDelay: 0, projectiles: [], blocks: [],
+    boss: null, bossDelay: 0, bossCount: 0, miniN: 0, bossN: 0, projectiles: [], blocks: [],
     rageT: 0,
     deathT: 0, focusX: 0, focusY: 0, zoom: 1, ending: 'miss', winner: '',
     scorePop: 0, shownScore: 0, bannerT: 0, newBest: false,
@@ -449,7 +559,7 @@
     p1: 0, p2: 0, rally: 0, longestRally: 0,
     timeline: [], tlNext: 1, ghost: null,
     nearMarks: [],
-    bg: LEVEL_TINTS[0].slice(),
+    bg: themeBg(),
     pending: false, pendingValue: 0, lastEntry: null, lastEntryMode: '', recordsFrom: 'menu', boardMode: 'classic',
     lastTick: 99,
   };
@@ -469,7 +579,7 @@
 
   const single = () => G.mode !== 'duel';
   const has = {
-    orbs: () => G.mode === 'classic' || G.mode === 'rush',
+    orbs: () => G.mode === 'classic' || G.mode === 'rush' || G.mode === 'bossrush',
     events: () => (G.mode === 'classic' && G.level >= 2) || (G.mode === 'rush' && G.elapsed > 12),
     lastChance: () => G.mode === 'classic' || G.mode === 'survival',
   };
@@ -481,6 +591,7 @@
     switch (G.mode) {
       case 'survival': k = Math.min(3.2, 0.72 + G.elapsed * 0.012); break;
       case 'rush': k = Math.min(2.2, 0.8 + G.elapsed * 0.012); break;
+      case 'bossrush': k = Math.min(2.2, 0.85 + G.run.bosses * 0.1); break;
       case 'duel': k = Math.min(2.2, 0.8 + G.rally * 0.05); break;
       default: k = Math.min(2.5, SPEED_START + (G.level - 1) * SPEED_PER_LEVEL + G.levelHits * 0.01);
     }
@@ -520,7 +631,7 @@
   }
 
   function spawnTarget() {
-    const lvl = G.mode === 'rush' ? 4 : G.level;
+    const lvl = G.mode === 'rush' ? 4 : G.mode === 'bossrush' ? 3 : G.level;
     const pool = Object.entries(ORBS).filter(([k, o]) => o.min <= lvl && !(k === 'shield' && G.shield >= 2));
     let r0 = Math.random() * pool.reduce((s, [, o]) => s + o.w, 0);
     let type = pool[0][0];
@@ -556,7 +667,7 @@
     const count = Math.round(n * (reduced ? 0.5 : 1));
     const {
       colors = [C.rust, C.ink, C.sand], speed = [80, 380], angle = 0, spread = Math.PI * 2,
-      life = [0.35, 0.8], size = [1.5, 3.5], gravity = 380, drag = 2.2, spark = 0.6,
+      life = [0.35, 0.8], size = [1.5, 3.5], gravity = 380, drag = 2.2, spark = 0.6, shape = null,
     } = opts;
     for (let i = 0; i < count; i++) {
       const a = angle + (Math.random() - 0.5) * spread;
@@ -566,7 +677,7 @@
         x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s,
         life: l, max: l, size: rand(size[0], size[1]),
         color: colors[(Math.random() * colors.length) | 0],
-        gravity, drag, spark: Math.random() < spark,
+        gravity, drag, spark: !shape && Math.random() < spark, shape,
       });
     }
     if (particles.length > MAX_PARTICLES) particles.splice(0, particles.length - MAX_PARTICLES);
@@ -579,7 +690,7 @@
       });
     }
   }
-  function ring(x, y, max, color = C.rust, width = 3, life = 0.45) { rings.push({ x, y, max, color, width, life, t: 0 }); }
+  function ring(x, y, max, color = C.rust, width = 3, life = 0.45, start = 0) { rings.push({ x, y, max, color, width, life, t: start }); }
   function popup(x, y, text, { size = 26, color = C.ink, life = 0.9, font = FONT_SANS, weight = 800, italic = false } = {}) {
     popups.push({ x: clamp(x, 40, W - 40), y: clamp(y, M.inset + 100, H - M.inset - 50), text, size, color, life, t: 0, font, weight, italic });
   }
@@ -593,7 +704,7 @@
 
   // ================================================================ game flow
   function setScreen(name) {
-    for (const s of [el.menu, el.pause, el.over, el.records, el.settings]) s.classList.remove('show');
+    for (const s of [el.menu, el.pause, el.over, el.records, el.settings, el.locker]) s.classList.remove('show');
     if (name) el[name].classList.add('show');
     document.body.classList.toggle('ui-open', !!name);
     el.btnPause.hidden = G.state !== 'playing';
@@ -605,7 +716,7 @@
       elapsed: 0, timeLeft: RUSH_TIME, topSpeed: 1,
       timeScale: 1, hitStop: 0, shield: 0, spawnT: G.mode === 'rush' ? 2 : 4, deathT: 0, zoom: 1,
       event: null, eventT: rand(14, 20), lastEvent: '',
-      boss: null, bossDelay: 0, projectiles: [], blocks: [],
+      boss: null, bossDelay: G.mode === 'bossrush' ? 1.6 : 0, bossCount: 0, miniN: 0, bossN: 0, projectiles: [], blocks: [],
       rageT: 0, ending: 'miss', winner: '',
       shownScore: 0, newBest: false, flash: 0, bannerT: 0,
       lastChanceAvail: Math.random() < 0.5, milestoneIdx: 0, dangerSlow: false,
@@ -679,10 +790,10 @@
   function levelUp() {
     G.level++;
     G.bannerT = 1.5;
-    const boss = G.level % 5 === 0;
+    const boss = bossKindForLevel(G.level);
     el.bannerKicker.textContent = 'Level';
     el.bannerNum.textContent = G.level;
-    el.bannerSub.textContent = boss ? 'boss incoming!' : UNLOCKS[G.level] || 'speed ' + speedLabel();
+    el.bannerSub.textContent = boss === 'boss' ? 'boss incoming!' : boss === 'mini' ? 'mini-boss incoming!' : UNLOCKS[G.level] || 'speed ' + speedLabel();
     restartAnim(el.banner, 'show');
     syncBumpers();
     Sfx.level();
@@ -704,7 +815,7 @@
     G.scorePop = 1;
     if (G.mode !== 'survival') bump(el.s[0].value);
     const best = bests[G.mode] || 0;
-    if (G.mode !== 'survival' && G.score > best && !G.newBest && best > 0) {
+    if (G.mode !== 'survival' && G.mode !== 'bossrush' && G.score > best && !G.newBest && best > 0) {
       G.newBest = true;
       popup(W / 2, H * 0.4, 'new personal best!', { size: 32, color: C.rust, font: FONT_SERIF, weight: 400, italic: true, life: 1.4 });
       Sfx.milestone();
@@ -735,10 +846,11 @@
     if (m === 'classic') { set(0, 'Score', String(G.score)); set(1, 'Level', String(G.level)); set(2, 'Speed', speedLabel()); }
     else if (m === 'survival') { set(0, 'Time', fmtTime(G.elapsed)); set(1, 'Bounces', String(G.hits)); set(2, 'Speed', speedLabel()); }
     else if (m === 'rush') { set(0, 'Score', String(G.score)); set(1, 'Time', fmtClock(G.timeLeft)); set(2, 'Speed', speedLabel()); }
+    else if (m === 'bossrush') { set(0, 'Score', String(G.score)); set(1, 'Bosses', String(G.run.bosses)); set(2, 'Speed', speedLabel()); }
     S[1].wrap.classList.toggle('urgent', m === 'rush' && G.timeLeft <= 10);
 
     if (m !== 'duel') {
-      setText(el.best, fmtScore(m, Math.max(bests[m] || 0, m === 'survival' ? 0 : G.score)));
+      setText(el.best, fmtScore(m, Math.max(bests[m] || 0, m === 'survival' ? 0 : m === 'bossrush' ? G.run.bosses : G.score)));
       // Personal-best ghost: how far ahead or behind your best run you are at this moment.
       let ghostTxt = '';
       let ahead = true;
@@ -839,16 +951,35 @@
     }
     b.danger = false;
 
-    const power = playing ? 1 : 0.5;
-    emit(b.x, cy, ((perfect ? 26 : 14) + tier * 8) * power + G.mult * 2, {
-      angle: dirY, spread: Math.PI * 0.9, speed: [120, (perfect ? 520 : 380) + tier * 60],
-      colors: perfect ? [TIER_COLORS[tier], C.rust, C.sand, C.ink] : [C.ink, C.rust, C.sand],
-    });
-    ring(b.x, cy, perfect ? 90 + tier * 20 : 55, perfect ? TIER_COLORS[tier] : C.ink, perfect ? 4 : 2.5);
+    bounceEffect(b.x, cy, dirY, perfect, tier, playing ? 1 : 0.5);
     if (playing) {
       shake(perfect ? 0.28 + tier * 0.07 : 0.16);
       if (perfect) { G.hitStop = 0.045; flash(0.08 + tier * 0.03, TIER_COLORS[tier]); }
     }
+  }
+
+  // The paddle-hit burst, styled by the equipped bounce effect.
+  function bounceEffect(x, y, angle, perfect, tier, power) {
+    const n = ((perfect ? 26 : 14) + tier * 8) * power + G.mult * 2;
+    const hot = perfect ? TIER_COLORS[tier] : C.ink;
+    switch (equip.effect) {
+      case 'confetti':
+        emit(x, y, n, { angle, spread: Math.PI * 1.1, speed: [120, 440 + tier * 60], gravity: 420, drag: 1.6, size: [3, 6], shape: 'square', colors: [C.rust, C.sage, C.rose, C.gold, C.slate] });
+        break;
+      case 'ripple':
+        emit(x, y, n * 0.35, { angle, spread: Math.PI * 0.6, speed: [60, 200], colors: [C.slate, C.mist] });
+        for (let i = 0; i < 3; i++) ring(x, y, (perfect ? 70 : 45) + i * 28 + tier * 14, i ? C.mist : hot, 3.5 - i, 0.55 + i * 0.1, -i * 0.08);
+        return;
+      case 'ink':
+        emit(x, y, n * 0.6, { angle, spread: Math.PI * 0.8, speed: [80, 320], gravity: 700, drag: 1.2, size: [3, 8], shape: 'blob', colors: [C.ink, C.ink, hot] });
+        break;
+      case 'stars':
+        emit(x, y, n * 0.7, { angle, spread: Math.PI, speed: [100, 420 + tier * 60], gravity: 200, size: [4, 8], shape: 'star', colors: [C.gold, C.sand, C.rust] });
+        break;
+      default:
+        emit(x, y, n, { angle, spread: Math.PI * 0.9, speed: [120, (perfect ? 520 : 380) + tier * 60], colors: perfect ? [TIER_COLORS[tier], C.rust, C.sand, C.ink] : [C.ink, C.rust, C.sand] });
+    }
+    ring(x, y, perfect ? 90 + tier * 20 : 55, hot, perfect ? 4 : 2.5);
   }
 
   function hitWall(b, side) {
@@ -1023,21 +1154,32 @@
 
   // ================================================================ bosses
   const bossRadius = () => clamp(Math.min(W, H) * 0.075, 34, 62);
-  function spawnBoss() {
-    const tier = Math.max(1, Math.round(G.level / 5));
-    const hp = 6 + (tier - 1) * 3;
+  function spawnBoss(kind) {
+    if (!kind) kind = G.mode === 'bossrush' ? (G.bossCount === 0 ? 'mini' : 'boss') : bossKindForLevel(G.level) || 'boss';
+    const mini = kind === 'mini';
+    G.bossCount++;
+    const tier = mini ? ++G.miniN : ++G.bossN;
+    // Each one is tougher than the last, and later bosses learn new attacks.
+    const hp = mini ? 2 + tier : 5 + tier * 2;
+    const attacks = mini
+      ? (tier >= 2 ? ['spit', 'warp'] : ['spit'])
+      : ['spit', 'warp'].concat(tier >= 2 ? ['wall'] : [], tier >= 3 ? ['spray'] : []);
+    const names = mini ? MINI_NAMES : BOSS_NAMES;
+    const name = names[(tier - 1) % names.length] + (tier > names.length ? ' II' : '');
     G.bossDelay = 0;
     G.boss = {
-      x: W / 2, y: H / 2, r: bossRadius(), hp, maxHp: hp, t: 0, age: 0,
-      attackT: 3, hurt: 0, mouth: 0, tier, name: BOSS_NAMES[(tier - 1) % BOSS_NAMES.length],
+      x: W / 2, y: H / 2, r: bossRadius() * (mini ? 0.7 : 1), hp, maxHp: hp, t: 0, age: 0,
+      attackT: mini ? 3.4 : 3, hurt: 0, mouth: 0, tier, mini, attacks, name,
     };
     if (G.event) endEvent(false);
-    el.bossName.textContent = G.boss.name;
+    el.bossKind.textContent = mini ? 'Mini-boss' : 'Boss';
+    el.bossName.textContent = name;
+    el.bossBar.classList.toggle('mini', mini);
     el.bossBar.style.setProperty('--p', '1');
     el.bossBar.hidden = false;
-    announce('BOSS FIGHT!', 'boss');
+    announce(mini ? 'MINI-BOSS!' : 'BOSS FIGHT!', 'boss');
     Sfx.bossRoar();
-    shake(0.6);
+    shake(mini ? 0.35 : 0.6);
     flash(0.25, C.ink);
     for (const t of targets) if (Math.hypot(t.x - W / 2, t.y - H / 2) < G.boss.r * 3) t.dead = true;
   }
@@ -1053,23 +1195,26 @@
     B.y = H / 2 + Math.sin(B.t * 1.3) * H * 0.04;
     if (G.state === 'playing' && B.age > 1.2) {
       B.attackT -= sdt;
-      if (B.attackT <= 0) { bossAttack(B); B.attackT = Math.max(1.6, 3.3 - B.tier * 0.3) * rand(0.85, 1.15); }
+      if (B.attackT <= 0) { bossAttack(B); B.attackT = Math.max(1.4, (B.mini ? 3.6 : 3.3) - B.tier * 0.3) * rand(0.85, 1.15); }
     }
   }
   function bossAttack(B, forced) {
     B.mouth = 1;
-    const choices = ['spit', 'spit', 'warp'];
-    if (G.blocks.length < 2) choices.push('wall');
+    const choices = B.attacks.flatMap((a) => (a === 'spit' ? ['spit', 'spit'] : a === 'wall' && G.blocks.length >= 2 ? [] : [a]));
     const kind = forced || pick(choices);
-    if (kind === 'spit') {
-      // Fire a glob at each paddle. A direct hit stuns that paddle.
+    if (kind === 'spit' || kind === 'spray') {
+      // Fire globs at each paddle (a fan of three for "spray"). A direct hit stuns that paddle.
+      const fan = kind === 'spray' ? [-0.35, 0, 0.35] : [0];
       for (const which of ['top', 'bot']) {
         const p = pads[which];
-        const v = H * 0.42;
+        const v = H * (kind === 'spray' ? 0.36 : 0.42);
         const ty = which === 'bot' ? M.botY : M.topY + M.padH;
         const T = Math.abs(ty - B.y) / v;
-        G.projectiles.push({ x: B.x, y: B.y + (which === 'bot' ? B.r : -B.r), vx: (p.x - B.x) / T * rand(0.7, 1.05), vy: which === 'bot' ? v : -v, r: Math.max(6, M.ballR * 0.9) });
+        for (const off of fan) {
+          G.projectiles.push({ x: B.x, y: B.y + (which === 'bot' ? B.r : -B.r), vx: ((p.x - B.x) / T) * rand(0.7, 1.05) + off * v, vy: which === 'bot' ? v : -v, r: Math.max(6, M.ballR * 0.9) });
+        }
       }
+      if (kind === 'spray') popup(B.x, B.y - B.r - 30, 'spray!', { size: 26, color: C.rust, font: FONT_SERIF, weight: 400, italic: true });
       Sfx.spit();
     } else if (kind === 'warp') {
       // Bend every ball's path.
@@ -1109,22 +1254,27 @@
   }
   function killBoss() {
     const B = G.boss;
-    const bonus = 50 * G.level;
-    for (let i = 0; i < 4; i++) emit(B.x, B.y, 40, { colors: [C.ink, C.rust, C.gold, C.sand], speed: [150, 700], life: [0.6, 1.5] });
+    const bonus = (B.mini ? 25 : 50) * (G.mode === 'bossrush' ? G.run.bosses + 1 : G.level);
+    for (let i = 0; i < 4; i++) emit(B.x, B.y, B.mini ? 24 : 40, { colors: [C.ink, C.rust, C.gold, C.sand], speed: [150, 700], life: [0.6, 1.5] });
     for (let i = 0; i < 4; i++) ring(B.x, B.y, B.r * (3 + i * 2), [C.rust, C.gold, C.ink, C.sage][i], 8 - i, 0.6 + i * 0.15);
     G.boss = null;
     G.projectiles = [];
     el.bossBar.hidden = true;
     G.hitStop = 0.3;
     flash(0.4, C.gold);
-    shake(0.8);
+    shake(B.mini ? 0.5 : 0.8);
     addScore(bonus, true);
-    updateHud();
-    announce('BOSS DEFEATED +' + bonus, 'boss');
-    confetti(6);
-    Sfx.bossDie();
     G.run.bosses++;
+    updateHud();
+    announce((B.mini ? 'MINI-BOSS DOWN +' : 'BOSS DEFEATED +') + bonus, 'boss');
+    confetti(B.mini ? 4 : 6);
+    Sfx.bossDie();
     unlock('boss');
+    if (G.mode === 'bossrush') {
+      if (G.run.bosses >= 3) unlock('gauntlet');
+      if (G.run.bosses >= 6) unlock('monster');
+      G.bossDelay = 2.6; // the next one is on its way
+    }
   }
   function stunPad(which) {
     const p = pads[which];
@@ -1258,6 +1408,13 @@
   function gameOver() {
     G.state = 'over';
     const m = G.mode;
+    // Lifetime stats drive some Locker unlocks.
+    lifetime.games++;
+    lifetime.bounces += G.hits;
+    lifetime.perfects += G.run.perfects;
+    lifetime.bosses += G.run.bosses;
+    store.set('bib.stats', lifetime);
+    checkUnlocks();
     el.hud.hidden = true;
     el.bossBar.hidden = true;
     const stats = [];
@@ -1273,12 +1430,12 @@
       stats.push(['Longest rally', G.longestRally], ['Bounces', G.hits], ['Time', fmtClock(G.elapsed)], ['Top speed', G.topSpeed.toFixed(1) + '×']);
       unlock('duel');
     } else {
-      value = m === 'survival' ? Math.round(G.elapsed * 10) / 10 : G.score;
+      value = m === 'survival' ? Math.round(G.elapsed * 10) / 10 : m === 'bossrush' ? G.run.bosses : G.score;
       isBest = value > (bests[m] || 0);
       if (isBest) {
         bests[m] = value;
         store.set(bestKey(m), value);
-        if (m !== 'survival') store.set('bib.ghost.' + m, G.timeline.concat([G.score]).slice(0, 3600));
+        if (m === 'classic' || m === 'rush') store.set('bib.ghost.' + m, G.timeline.concat([G.score]).slice(0, 3600));
       }
       el.overEyebrow.textContent = MODES[m].name + ' · game over';
       setTitle(m === 'rush' ? 'Time’s up!' : 'Missed it.');
@@ -1287,6 +1444,7 @@
       if (m === 'classic') stats.push(['Best', fmtScore(m, bests[m])], ['Level', G.level], ['Bounces', G.hits], ['Top streak', G.bestStreak]);
       if (m === 'survival') stats.push(['Best', fmtScore(m, bests[m])], ['Bounces', G.hits], ['Top streak', G.bestStreak], ['Top speed', G.topSpeed.toFixed(1) + '×']);
       if (m === 'rush') stats.push(['Best', fmtScore(m, bests[m])], ['Bounces', G.hits], ['Top streak', G.bestStreak], ['Orbs', G.run.orbs]);
+      if (m === 'bossrush') stats.push(['Best', fmtScore(m, bests[m])], ['Points', G.score], ['Bounces', G.hits], ['Top streak', G.bestStreak]);
     }
     fillStats(el.overStats, stats);
     el.overNew.hidden = !isBest || value === 0;
@@ -1375,7 +1533,7 @@
     c.fillStyle = C.ink;
     c.font = `22px ${FONT_MONO}`;
     c.fillText(`BOUNCE IT BACK 2.0 · ${MODES[m].name.toUpperCase()}`, 84, 108);
-    const big = m === 'duel' ? `${G.p1}–${G.p2}` : fmtScore(m, m === 'survival' ? Math.round(G.elapsed * 10) / 10 : G.score);
+    const big = m === 'duel' ? `${G.p1}–${G.p2}` : fmtScore(m, m === 'survival' ? Math.round(G.elapsed * 10) / 10 : m === 'bossrush' ? G.run.bosses : G.score);
     c.font = `800 190px ${FONT_SANS}`;
     c.fillText(big, 76, 300, 700);
     c.font = `italic 54px ${FONT_SERIF}`;
@@ -1384,7 +1542,7 @@
     c.fillStyle = C.ink;
     c.font = `600 28px ${FONT_SANS}`;
     const line = m === 'duel' ? `Longest rally ${G.longestRally} · ${G.hits} bounces`
-      : `${m === 'classic' ? 'Level ' + G.level + ' · ' : ''}${G.hits} bounces · top streak ${G.bestStreak}`;
+      : `${m === 'classic' ? 'Level ' + G.level + ' · ' : m === 'bossrush' ? G.score + ' points · ' : ''}${G.hits} bounces · top streak ${G.bestStreak}`;
     c.fillText(line, 84, 440, 700);
     c.font = `24px ${FONT_MONO}`;
     const name = cleanName(store.get('bib.name', ''));
@@ -1502,6 +1660,118 @@
     }
   }
 
+  // ---------------------------------------------------------------- the Locker
+  let lockerCat = 'ball';
+  let lockerFrom = 'menu';
+  function applyTheme() {
+    document.body.classList.toggle('dark', !!theme().dark);
+    document.body.dataset.theme = equip.theme;
+  }
+  function openLocker() {
+    commitPending();
+    lockerFrom = el.over.classList.contains('show') ? 'over' : 'menu';
+    store.set('bib.lockerNew', false);
+    updateLockerDot();
+    renderLocker();
+    setScreen('locker');
+    $('#btn-locker-back').focus({ preventScroll: true });
+  }
+  function closeLocker() {
+    setScreen(lockerFrom);
+    if (lockerFrom === 'menu') refreshMenu();
+    (lockerFrom === 'over' ? $('#btn-again') : $('#btn-play')).focus({ preventScroll: true });
+  }
+  function renderLocker() {
+    for (const b of $$('.locker-cat')) b.setAttribute('aria-pressed', String(b.dataset.cat === lockerCat));
+    const group = COSMETICS[lockerCat];
+    el.lockerGrid.replaceChildren();
+    for (const item of group.items) {
+      const open = itemUnlocked(item);
+      const on = equip[lockerCat] === item.id;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'locker-item' + (open ? '' : ' locked') + (on ? ' on' : '');
+      btn.setAttribute('aria-pressed', String(on));
+      if (!open) btn.setAttribute('aria-disabled', 'true');
+      const cv = document.createElement('canvas');
+      cv.width = 192; cv.height = 120;
+      paintPreview(cv.getContext('2d'), lockerCat, item.id);
+      const n = document.createElement('b'); n.textContent = item.name;
+      const s = document.createElement('small'); s.textContent = on ? 'Equipped' : open ? 'Tap to equip' : 'Locked · ' + reqText(item);
+      btn.append(cv, n, s);
+      btn.addEventListener('click', () => {
+        if (!open) { Sfx.init(); Sfx.wall(); return; }
+        equip[lockerCat] = item.id;
+        store.set('bib.equip', equip);
+        applyTheme();
+        Sfx.init(); Sfx.click();
+        renderLocker();
+      });
+      el.lockerGrid.append(btn);
+    }
+    let total = 0, got = 0;
+    for (const g of Object.values(COSMETICS)) for (const i of g.items) { total++; if (itemUnlocked(i)) got++; }
+    el.lockerCount.textContent = `${got}/${total} unlocked`;
+  }
+  // Little static previews for the Locker grid (96×60 at 2× resolution).
+  function paintPreview(c, cat, id) {
+    c.scale(2, 2);
+    const w = 96, h = 60;
+    const T = THEMES[cat === 'theme' ? id : equip.theme];
+    c.fillStyle = T.bg; c.fillRect(0, 0, w, h);
+    if (T.bg2) { const g = c.createLinearGradient(0, 0, 0, h); g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, T.bg2); c.globalAlpha = 0.75; c.fillStyle = g; c.fillRect(0, 0, w, h); c.globalAlpha = 1; }
+    if (T.grid) {
+      c.strokeStyle = T.dot; c.lineWidth = 0.75; c.beginPath();
+      for (let y = 6; y < h; y += 12) { c.moveTo(0, y); c.lineTo(w, y); }
+      for (let x = 6; x < w; x += 12) { c.moveTo(x, 0); c.lineTo(x, h); }
+      c.stroke();
+    } else {
+      c.fillStyle = T.dot;
+      for (let y = 6; y < h; y += 12) for (let x = 6; x < w; x += 12) c.fillRect(x - 0.75, y - 0.75, 1.5, 1.5);
+    }
+    const ink = T.dark ? C.paper : C.ink;
+    const ball = (x, y, r, skin) => { c.save(); c.translate(x, y); paintBallSkin(c, skin, r, 0.5); c.restore(); };
+    if (cat === 'paddle') paintPaddleSkin(c, 14, 25, 68, 10, id, 1.3, ink);
+    else if (cat === 'ball') ball(48, 30, 13, id);
+    else if (cat === 'trail') {
+      const pts = [];
+      for (let i = 0; i < 14; i++) pts.push(76 - i * 4.6, 16 + i * 2.4 + Math.sin(i * 0.7) * 3);
+      paintTrail(c, pts, 6, id, C.rust, 0, 1);
+      ball(76, 16, 6, equip.ball);
+    } else if (cat === 'theme') {
+      paintPaddleSkin(c, 26, 47, 44, 6, equip.paddle, 1, ink);
+      ball(58, 26, 6, equip.ball);
+    } else if (cat === 'effect') {
+      paintEffectPreview(c, id, 48, 44, ink);
+      paintPaddleSkin(c, 28, 46, 40, 6, equip.paddle, 1, ink);
+    }
+  }
+  function paintEffectPreview(c, id, x, y, ink) {
+    if (id === 'ripple') {
+      for (let i = 0; i < 3; i++) {
+        c.globalAlpha = 1 - i * 0.28; c.strokeStyle = i ? C.mist : C.slate; c.lineWidth = 2 - i * 0.4;
+        c.beginPath(); c.ellipse(x, y, 12 + i * 10, (12 + i * 10) * 0.6, 0, Math.PI, Math.PI * 2); c.stroke();
+      }
+      c.globalAlpha = 1;
+      return;
+    }
+    for (let i = 0; i < 9; i++) {
+      const a = -Math.PI / 2 + (i - 4) * 0.33;
+      const d = 12 + (i % 3) * 7;
+      const px = x + Math.cos(a) * d * 1.5, py = y + Math.sin(a) * d;
+      if (id === 'confetti') {
+        c.save(); c.translate(px, py); c.rotate(i); c.fillStyle = [C.rust, C.sage, C.rose, C.gold, C.slate][i % 5]; c.fillRect(-2.5, -1.5, 5, 3); c.restore();
+      } else if (id === 'ink') {
+        c.fillStyle = i % 3 ? ink : C.rust; c.beginPath(); c.arc(px, py, 1.5 + (i % 3), 0, Math.PI * 2); c.fill();
+      } else if (id === 'stars') {
+        c.fillStyle = [C.gold, C.sand, C.rust][i % 3]; starPath(c, px, py, 3.5, i, 5, 0.45); c.fill();
+      } else {
+        c.strokeStyle = [C.rust, ink, C.sand][i % 3]; c.lineWidth = 1.6; c.lineCap = 'round';
+        c.beginPath(); c.moveTo(px, py); c.lineTo(px - Math.cos(a) * 5, py - Math.sin(a) * 5); c.stroke();
+      }
+    }
+  }
+
   let settingsFrom = 'menu';
   function openSettings() {
     settingsFrom = G.state === 'paused' ? 'pause' : G.state === 'over' ? 'over' : 'menu';
@@ -1583,13 +1853,14 @@
     updateBoss(dt, sdt);
 
     // Background tint: per level, red in rage, cool in duel.
-    let tint = LEVEL_TINTS[0];
+    let tint = levelTint(0);
     if (G.state !== 'menu') {
-      if (G.mode === 'classic') tint = LEVEL_TINTS[(G.level - 1) % LEVEL_TINTS.length];
-      if (G.mode === 'survival') tint = LEVEL_TINTS[Math.floor(G.elapsed / 30) % LEVEL_TINTS.length];
-      if (G.mode === 'duel') tint = DUEL_TINT;
+      if (G.mode === 'classic') tint = levelTint(G.level - 1);
+      if (G.mode === 'survival') tint = levelTint(Math.floor(G.elapsed / 30));
+      if (G.mode === 'bossrush') tint = levelTint(G.run.bosses);
+      if (G.mode === 'duel') tint = duelTint();
     }
-    if (G.rageT > 0) tint = RAGE_TINT;
+    if (G.rageT > 0) tint = rageTint();
     G.bg = mixRgb(G.bg, tint, damp(G.rageT > 0 ? 6 : 2, dt));
 
     if (G.state !== 'paused') updatePads(dt);
@@ -1636,6 +1907,7 @@
       if (G.fx.magnet > 0 && G.state === 'playing') applyMagnet(b, sdt);
       stepBall(b, sdt);
       if (sdt > 0) {
+        b.rot = (b.rot || 0) + (Math.hypot(b.vx, b.vy) * sdt) / (b.r * 2.5); // spin for patterned balls
         b.trail.unshift(b.x, b.y);
         const maxLen = (reduced ? 8 : 16 + tierIdx(G.streak) * 5 + (G.rageT > 0 ? 8 : 0)) * 2;
         if (b.trail.length > maxLen) b.trail.length = maxLen;
@@ -1874,13 +2146,33 @@
   }
 
   function drawBackground() {
+    const T = theme();
     const gap = W < 500 ? 24 : 32;
     const drift = (G.time * (6 + G.level * 2 + (G.rageT > 0 ? 40 : 0))) % gap;   // the grid drifts faster as levels climb
-    ctx.fillStyle = 'rgba(28,27,29,0.07)';
-    for (let y = -gap + drift; y < H + gap; y += gap) {
-      for (let x = gap / 2; x < W; x += gap) ctx.fillRect(x - 1, y - 1, 2, 2);
+    if (T.bg2) {
+      const g = ctx.createLinearGradient(0, 0, 0, H);
+      g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, T.bg2);
+      ctx.globalAlpha = 0.75; ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 1;
     }
-    ctx.strokeStyle = 'rgba(28,27,29,0.10)';
+    if (T.grid) {
+      ctx.strokeStyle = T.dot; ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let y = -gap + drift; y < H + gap; y += gap) { ctx.moveTo(0, y); ctx.lineTo(W, y); }
+      for (let x = gap / 2; x < W; x += gap) { ctx.moveTo(x, 0); ctx.lineTo(x, H); }
+      ctx.stroke();
+    } else {
+      ctx.fillStyle = T.dot;
+      let i = 0;
+      for (let y = -gap + drift; y < H + gap; y += gap) {
+        for (let x = gap / 2; x < W; x += gap) {
+          if (T.stars) ctx.globalAlpha = reduced ? 0.5 : 0.15 + 0.6 * Math.abs(Math.sin(G.time * 0.9 + i * 12.9898));
+          i++;
+          ctx.fillRect(x - 1, y - 1, 2, 2);
+        }
+      }
+      ctx.globalAlpha = 1;
+    }
+    ctx.strokeStyle = T.line;
     ctx.lineWidth = 1;
     ctx.setLineDash([6, 10]);
     ctx.beginPath(); ctx.moveTo(0, H / 2); ctx.lineTo(W, H / 2); ctx.stroke();
@@ -1899,7 +2191,7 @@
       const size = Math.min(W * 0.4, H * 0.28);
       ctx.font = `800 ${size}px ${FONT_SANS}`;
       ctx.globalAlpha = 0.08 + G.scorePop * 0.1;
-      ctx.fillStyle = C.ink;
+      ctx.fillStyle = fg();
       ctx.fillText(String(G.p2), W / 2, H * 0.27);
       ctx.fillText(String(G.p1), W / 2, H * 0.73);
       ctx.font = `14px ${FONT_MONO}`;
@@ -1924,7 +2216,7 @@
       const txt = G.mode === 'survival' ? String(Math.floor(G.elapsed)) : String(Math.round(G.shownScore));
       ctx.font = `800 ${size * (txt.length > 3 ? 0.75 : 1)}px ${FONT_SANS}`;
       ctx.globalAlpha = (0.07 + G.scorePop * 0.12) * (G.bannerT > 0 || G.boss ? 0.25 : 1);
-      ctx.fillStyle = G.scorePop > 0.05 || G.rageT > 0 ? C.rust : C.ink;
+      ctx.fillStyle = G.scorePop > 0.05 || G.rageT > 0 ? C.rust : fg();
       ctx.fillText(txt, 0, size * 0.04);
     }
     ctx.restore();
@@ -1976,7 +2268,7 @@
     if (G.shield <= 0 || G.state === 'menu' || G.state === 'over') return;
     ctx.save();
     ctx.globalAlpha = 0.55 + 0.25 * Math.sin(G.time * 5);
-    ctx.strokeStyle = C.slate;
+    ctx.strokeStyle = theme().dark ? C.mist : C.slate;
     ctx.lineWidth = 2 + G.shield * 1.5;
     ctx.setLineDash([12, 7]);
     ctx.lineDashOffset = -G.time * 40;
@@ -2019,13 +2311,13 @@
     ctx.fillStyle = 'rgba(28,27,29,0.18)';
     roundRect(-w / 2 + 3, -h / 2 + 3, w, h, h / 2);
     ctx.fill();
-    let body = C.ink;
-    if (G.mode === 'duel' && G.state !== 'menu') body = dir > 0 ? C.ink : C.slate;
-    else if (reversed()) body = C.slate;
-    if (p.stun > 0 && Math.floor(G.time * 12) % 2) body = '#77737a';
-    ctx.fillStyle = p.flash > 0 ? mix(body, C.rust, p.flash) : body;
-    roundRect(-w / 2, -h / 2, w, h, h / 2);
-    ctx.fill();
+    paintPaddleSkin(ctx, -w / 2, -h / 2, w, h, equip.paddle, G.time, fg());
+    // state overlays on top of the skin: two-player top side, reversed controls, stun, hit flash
+    const overlay = (color, a) => { ctx.globalAlpha = a; ctx.fillStyle = color; roundRect(-w / 2, -h / 2, w, h, h / 2); ctx.fill(); ctx.globalAlpha = 1; };
+    if (G.mode === 'duel' && G.state !== 'menu' && dir < 0) overlay(C.slate, 0.55);
+    else if (reversed()) overlay(C.slate, 0.6);
+    if (p.stun > 0 && Math.floor(G.time * 12) % 2) overlay('#77737a', 0.85);
+    if (p.flash > 0) overlay(C.rust, p.flash * 0.85);
     // sweet-spot marker (its colour follows your combo tier)
     ctx.fillStyle = p.flash > 0.3 ? C.paper : TIER_COLORS[G.rageT > 0 ? 3 : tierIdx(G.streak)];
     ctx.globalAlpha = 0.9;
@@ -2051,23 +2343,9 @@
   }
 
   function drawTrail(b) {
-    const t = b.trail;
-    const n = t.length / 2;
-    if (n < 2) return;
     const tier = G.rageT > 0 ? 3 : tierIdx(G.streak);
-    ctx.fillStyle = G.rageT > 0 ? C.rust : G.fx.double > 0 ? C.ember : TIER_COLORS[tier];
-    for (let i = 1; i < n; i++) {
-      const k = 1 - i / n;
-      if (tier >= 1) { // the glowing halo grows with the combo
-        ctx.globalAlpha = k * 0.12 * tier;
-        ctx.beginPath(); ctx.arc(t[i * 2], t[i * 2 + 1], b.r * (1.2 + tier * 0.5) * k + 1, 0, Math.PI * 2); ctx.fill();
-      }
-      ctx.globalAlpha = k * 0.38;
-      ctx.beginPath();
-      ctx.arc(t[i * 2], t[i * 2 + 1], b.r * (0.25 + 0.75 * k), 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.globalAlpha = 1;
+    const color = G.rageT > 0 ? C.rust : G.fx.double > 0 ? C.ember : TIER_COLORS[tier];
+    paintTrail(ctx, b.trail, b.r, equip.trail, color, tier, G.time);
   }
 
   function drawBall(b) {
@@ -2080,29 +2358,212 @@
     const r = b.r * Math.max(0.01, grow);
     const fire = G.fx.double > 0 || G.rageT > 0;
     const tier = tierIdx(G.streak);
+    const skin = fire && equip.ball === 'classic' ? 'glow' : equip.ball;
+    const angle = sp > 0 ? Math.atan2(b.vy, b.vx) : 0;
 
     ctx.save();
     ctx.translate(b.x, b.y);
     ctx.scale(1 + b.sq * 0.5, 1 - b.sq * 0.42);
-    if (sp > 0) { ctx.rotate(Math.atan2(b.vy, b.vx)); ctx.scale(stretch, 1 / stretch); }
+    ctx.rotate(angle);
+    ctx.scale(stretch, 1 / stretch);
     ctx.fillStyle = fire ? 'rgba(224,137,47,0.3)' : `rgba(196,80,42,${0.18 + tier * 0.06})`;
     ctx.beginPath(); ctx.arc(0, 0, r * (fire ? 2.6 + Math.sin(G.time * 30) * 0.3 : 2.1 + tier * 0.3), 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = fire ? C.ember : C.rust;
-    ctx.strokeStyle = C.ink;
-    ctx.lineWidth = 1.6;
-    ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    paintBallSkin(ctx, skin, r, (b.rot || 0) - angle);
     ctx.restore();
-    ctx.fillStyle = 'rgba(242,238,232,0.75)';
-    ctx.beginPath(); ctx.arc(b.x - r * 0.35, b.y - r * 0.35, r * 0.28, 0, Math.PI * 2); ctx.fill();
+    if (skin === 'classic' || skin === 'glow' || skin === 'ring') {
+      ctx.fillStyle = 'rgba(242,238,232,0.75)';
+      ctx.beginPath(); ctx.arc(b.x - r * 0.35, b.y - r * 0.35, r * 0.28, 0, Math.PI * 2); ctx.fill();
+    }
 
     if (b.serve > 0) {
-      ctx.strokeStyle = C.ink;
+      ctx.strokeStyle = fg();
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.arc(b.x, b.y, b.r * 3, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (b.serve / (b.serveMax || 0.65)));
       ctx.stroke();
     }
   }
+
+  // ---------------------------------------------------------------- skin painters (shared by the game and the Locker previews)
+  function rr(c, x, y, w, h, r) {
+    r = Math.max(0, Math.min(r, w / 2, h / 2));
+    c.beginPath();
+    c.moveTo(x + r, y);
+    c.arcTo(x + w, y, x + w, y + h, r);
+    c.arcTo(x + w, y + h, x, y + h, r);
+    c.arcTo(x, y + h, x, y, r);
+    c.arcTo(x, y, x + w, y, r);
+    c.closePath();
+  }
+  function starPath(c, x, y, r, rot, points = 5, inner = 0.45) {
+    c.beginPath();
+    for (let i = 0; i < points * 2; i++) {
+      const a = rot - Math.PI / 2 + (i * Math.PI) / points;
+      const rr2 = i % 2 ? r * inner : r;
+      c.lineTo(x + Math.cos(a) * rr2, y + Math.sin(a) * rr2);
+    }
+    c.closePath();
+  }
+  function heartPath(c, x, y, s) {
+    c.beginPath();
+    c.moveTo(x, y + s * 0.35);
+    c.bezierCurveTo(x - s, y - s * 0.3, x - s * 0.45, y - s * 0.95, x, y - s * 0.4);
+    c.bezierCurveTo(x + s * 0.45, y - s * 0.95, x + s, y - s * 0.3, x, y + s * 0.35);
+    c.closePath();
+  }
+  function paintPaddleSkin(c, x, y, w, h, skin, time, base) {
+    const r = h / 2;
+    switch (skin) {
+      case 'candy':
+        rr(c, x, y, w, h, r); c.fillStyle = C.paper; c.fill();
+        c.save(); rr(c, x, y, w, h, r); c.clip();
+        c.fillStyle = C.rust;
+        for (let sx = x - h; sx < x + w + h; sx += 10) { c.beginPath(); c.moveTo(sx, y + h); c.lineTo(sx + 5, y + h); c.lineTo(sx + 5 + h, y); c.lineTo(sx + h, y); c.fill(); }
+        c.restore();
+        rr(c, x, y, w, h, r); c.strokeStyle = C.ink; c.lineWidth = 1.5; c.stroke();
+        break;
+      case 'neon': {
+        const col = reduced ? '#ff3ea5' : `hsl(${(time * 50) % 360}, 100%, 62%)`;
+        c.save();
+        c.shadowColor = col; c.shadowBlur = 14;
+        rr(c, x, y, w, h, r); c.fillStyle = '#15161d'; c.fill();
+        c.lineWidth = 2.5; c.strokeStyle = col; c.stroke();
+        c.restore();
+        break;
+      }
+      case 'wood':
+        rr(c, x, y, w, h, r); c.fillStyle = '#b07a4a'; c.fill();
+        c.save(); rr(c, x, y, w, h, r); c.clip();
+        c.strokeStyle = '#8a5a33'; c.lineWidth = 1;
+        for (let k = 0; k < 3; k++) {
+          c.beginPath();
+          for (let px = x; px <= x + w; px += 6) { const py = y + h * (0.25 + k * 0.25) + Math.sin(px * 0.08 + k * 2) * 1.2; if (px === x) c.moveTo(px, py); else c.lineTo(px, py); }
+          c.stroke();
+        }
+        c.restore();
+        rr(c, x, y, w, h, r); c.strokeStyle = C.ink; c.lineWidth = 1; c.stroke();
+        break;
+      case 'sunset': {
+        const g = c.createLinearGradient(x, 0, x + w, 0);
+        g.addColorStop(0, C.rust); g.addColorStop(0.5, C.gold); g.addColorStop(1, C.rose);
+        rr(c, x, y, w, h, r); c.fillStyle = g; c.fill();
+        break;
+      }
+      case 'gold': {
+        const g = c.createLinearGradient(0, y, 0, y + h);
+        g.addColorStop(0, '#f5d77a'); g.addColorStop(0.5, C.gold); g.addColorStop(1, '#a8781f');
+        rr(c, x, y, w, h, r); c.fillStyle = g; c.fill();
+        c.save(); rr(c, x, y, w, h, r); c.clip();
+        c.fillStyle = 'rgba(255,255,255,0.55)';
+        c.fillRect(x + ((time * 90) % (w + 60)) - 30, y, 8, h);
+        c.restore();
+        break;
+      }
+      default:
+        rr(c, x, y, w, h, r); c.fillStyle = base; c.fill();
+    }
+  }
+  function paintBallSkin(c, skin, r, rot) {
+    c.lineWidth = 1.6;
+    c.strokeStyle = C.ink;
+    const circle = (fill) => { c.beginPath(); c.arc(0, 0, r, 0, Math.PI * 2); c.fillStyle = fill; c.fill(); };
+    switch (skin) {
+      case 'ring':
+        circle(C.paper); c.stroke();
+        c.strokeStyle = C.rust; c.lineWidth = r * 0.32;
+        c.beginPath(); c.arc(0, 0, r * 0.55, 0, Math.PI * 2); c.stroke();
+        break;
+      case 'beach': {
+        const cols = [C.rust, C.paper, C.sage, C.paper, C.gold, C.paper];
+        for (let i = 0; i < 6; i++) {
+          c.beginPath(); c.moveTo(0, 0); c.arc(0, 0, r, rot + (i * Math.PI) / 3, rot + ((i + 1) * Math.PI) / 3); c.closePath();
+          c.fillStyle = cols[i]; c.fill();
+        }
+        c.fillStyle = C.paper; c.beginPath(); c.arc(0, 0, r * 0.22, 0, Math.PI * 2); c.fill();
+        c.beginPath(); c.arc(0, 0, r, 0, Math.PI * 2); c.stroke();
+        break;
+      }
+      case 'glow':
+        c.save(); c.shadowColor = C.ember; c.shadowBlur = r * 1.8;
+        circle(C.ember);
+        c.restore();
+        c.strokeStyle = C.rust; c.beginPath(); c.arc(0, 0, r, 0, Math.PI * 2); c.stroke();
+        break;
+      case 'pixel': {
+        const n = 5, s = (r * 2) / n;
+        for (let gx = 0; gx < n; gx++) {
+          for (let gy = 0; gy < n; gy++) {
+            const cx = -r + s * (gx + 0.5), cy = -r + s * (gy + 0.5);
+            if (cx * cx + cy * cy > r * r * 1.08) continue;
+            c.fillStyle = gx === 1 && gy === 1 ? C.paper : (gx + gy) % 3 === 0 ? '#a8401f' : C.rust;
+            c.fillRect(-r + gx * s, -r + gy * s, s + 0.4, s + 0.4);
+          }
+        }
+        break;
+      }
+      case 'star':
+        starPath(c, 0, 0, r * 1.3, rot, 5, 0.5);
+        c.fillStyle = C.gold; c.fill(); c.stroke();
+        break;
+      case 'eye':
+        circle(C.paper); c.stroke();
+        c.fillStyle = C.slate; c.beginPath(); c.arc(r * 0.32, 0, r * 0.46, 0, Math.PI * 2); c.fill();
+        c.fillStyle = C.ink; c.beginPath(); c.arc(r * 0.4, 0, r * 0.22, 0, Math.PI * 2); c.fill();
+        c.fillStyle = C.paper; c.beginPath(); c.arc(r * 0.3, -r * 0.13, r * 0.09, 0, Math.PI * 2); c.fill();
+        break;
+      default:
+        circle(C.rust); c.stroke();
+    }
+  }
+  function paintTrail(c, t, r, style, color, tier, time) {
+    const n = t.length / 2;
+    if (n < 2) return;
+    if (tier >= 1) { // the glowing halo grows with the combo
+      c.fillStyle = color;
+      for (let i = 1; i < n; i++) {
+        const k = 1 - i / n;
+        c.globalAlpha = k * 0.12 * tier;
+        c.beginPath(); c.arc(t[i * 2], t[i * 2 + 1], r * (1.2 + tier * 0.5) * k + 1, 0, Math.PI * 2); c.fill();
+      }
+    }
+    if (style === 'ribbon') {
+      c.strokeStyle = color; c.lineCap = 'round'; c.lineJoin = 'round';
+      for (let i = 1; i < n; i++) {
+        const k = 1 - i / n;
+        c.globalAlpha = k * 0.55;
+        c.lineWidth = r * 1.7 * k + 0.5;
+        c.beginPath(); c.moveTo(t[i * 2 - 2], t[i * 2 - 1]); c.lineTo(t[i * 2], t[i * 2 + 1]); c.stroke();
+      }
+    } else {
+      for (let i = 1; i < n; i++) {
+        const k = 1 - i / n;
+        const x = t[i * 2], y = t[i * 2 + 1];
+        if (style === 'sparkle') {
+          if (i % 2) continue;
+          c.globalAlpha = k;
+          c.fillStyle = i % 4 ? C.gold : color;
+          starPath(c, x, y, r * (0.5 + 0.8 * k) * (0.75 + 0.25 * Math.sin(time * 20 + i)), time * 2 + i, 4, 0.3);
+          c.fill();
+        } else if (style === 'smoke') {
+          c.globalAlpha = k * 0.16;
+          c.fillStyle = '#8a8590';
+          c.beginPath(); c.arc(x, y, r * (0.7 + (1 - k) * 1.8), 0, Math.PI * 2); c.fill();
+        } else if (style === 'hearts') {
+          if (i % 2) continue;
+          c.globalAlpha = k * 0.85;
+          c.fillStyle = i % 4 ? C.rose : C.rust;
+          heartPath(c, x, y, r * 1.1 * k + 2);
+          c.fill();
+        } else {
+          c.globalAlpha = k * 0.38;
+          c.fillStyle = color;
+          c.beginPath(); c.arc(x, y, r * (0.25 + 0.75 * k), 0, Math.PI * 2); c.fill();
+        }
+      }
+    }
+    c.globalAlpha = 1;
+  }
+
   // While the ball is invisible, a faint shimmer now and then keeps it fair.
   function drawGhostHint(b) {
     if (Math.floor(G.time * 6) % 5) return;
@@ -2157,8 +2618,16 @@
     ctx.scale(1 + wob, 1 - wob);
     ctx.fillStyle = 'rgba(28,27,29,0.18)';
     ctx.beginPath(); ctx.arc(5, 7, r, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = B.hurt > 0 ? mix(C.ink, C.rust, B.hurt) : C.ink;
+    const body = B.mini ? C.slate : C.ink;
+    ctx.fillStyle = B.hurt > 0 ? mix(body, C.rust, B.hurt) : body;
     ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
+    if (!B.mini && B.tier >= 2) { // a crown for the tougher ones
+      ctx.fillStyle = C.gold; ctx.strokeStyle = C.ink; ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.45, -r * 0.82); ctx.lineTo(-r * 0.45, -r * 1.2); ctx.lineTo(-r * 0.22, -r * 1.0); ctx.lineTo(0, -r * 1.3);
+      ctx.lineTo(r * 0.22, -r * 1.0); ctx.lineTo(r * 0.45, -r * 1.2); ctx.lineTo(r * 0.45, -r * 0.82); ctx.closePath();
+      ctx.fill(); ctx.stroke();
+    }
     ctx.strokeStyle = C.rust; ctx.lineWidth = 3;
     ctx.setLineDash([6, 6]); ctx.lineDashOffset = -B.t * 30;
     ctx.beginPath(); ctx.arc(0, 0, r + 8, 0, Math.PI * 2); ctx.stroke();
@@ -2310,19 +2779,28 @@
 
   function drawParticles() {
     ctx.lineCap = 'round';
+    const dark = theme().dark;
     for (const p of particles) {
       const k = p.life / p.max;
+      const col = dark && p.color === C.ink ? C.paper : p.color;
       ctx.globalAlpha = Math.min(1, k * 1.5);
-      if (p.spark) {
-        ctx.strokeStyle = p.color;
+      const s = p.size * (0.4 + 0.6 * k);
+      if (p.shape === 'star') {
+        ctx.fillStyle = col; starPath(ctx, p.x, p.y, s * 1.3, p.life * 4, 5, 0.45); ctx.fill();
+      } else if (p.shape === 'square') {
+        ctx.fillStyle = col;
+        ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.life * 6); ctx.fillRect(-s / 2, -s * 0.3, s, s * 0.6); ctx.restore();
+      } else if (p.shape === 'blob') {
+        ctx.fillStyle = col; ctx.beginPath(); ctx.arc(p.x, p.y, s * 0.8, 0, Math.PI * 2); ctx.fill();
+      } else if (p.spark) {
+        ctx.strokeStyle = col;
         ctx.lineWidth = p.size * k + 0.4;
         ctx.beginPath();
         ctx.moveTo(p.x, p.y);
         ctx.lineTo(p.x - p.vx * 0.03, p.y - p.vy * 0.03);
         ctx.stroke();
       } else {
-        ctx.fillStyle = p.color;
-        const s = p.size * (0.4 + 0.6 * k);
+        ctx.fillStyle = col;
         ctx.fillRect(p.x - s / 2, p.y - s / 2, s, s);
       }
     }
@@ -2330,10 +2808,11 @@
   }
 
   function drawRing(r) {
+    if (r.t < 0) return; // delayed ring (ripple effect)
     const k = r.t / r.life;
     const e = 1 - Math.pow(1 - k, 3);
     ctx.globalAlpha = (1 - k) * 0.8;
-    ctx.strokeStyle = r.color;
+    ctx.strokeStyle = r.color === C.ink ? fg() : r.color;
     ctx.lineWidth = r.width * (1 - k) + 0.5;
     ctx.beginPath();
     ctx.arc(r.x, r.y, Math.max(0.1, r.max * e), 0, Math.PI * 2);
@@ -2356,23 +2835,15 @@
     ctx.textBaseline = 'middle';
     ctx.lineWidth = 5;
     ctx.lineJoin = 'round';
-    ctx.strokeStyle = C.paper;
+    const dark = theme().dark;
+    ctx.strokeStyle = dark ? C.ink : C.paper;
     ctx.strokeText(p.text, 0, 0);
-    ctx.fillStyle = p.color;
+    ctx.fillStyle = dark && p.color === C.ink ? C.paper : dark && p.color === C.slate ? C.mist : p.color;
     ctx.fillText(p.text, 0, 0);
     ctx.restore();
   }
 
-  function roundRect(x, y, w, h, r) {
-    r = Math.max(0, Math.min(r, w / 2, h / 2));
-    ctx.beginPath();
-    ctx.moveTo(x + r, y);
-    ctx.arcTo(x + w, y, x + w, y + h, r);
-    ctx.arcTo(x + w, y + h, x, y + h, r);
-    ctx.arcTo(x, y + h, x, y, r);
-    ctx.arcTo(x, y, x + w, y, r);
-    ctx.closePath();
-  }
+  function roundRect(x, y, w, h, r) { rr(ctx, x, y, w, h, r); }
 
   function mix(a, b, t) {
     const pa = hexRgb(a), pb = hexRgb(b);
@@ -2408,11 +2879,12 @@
   window.addEventListener('keydown', (e) => {
     if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return; // typing a name
     const k = e.key;
-    const uiOpen = el.records.classList.contains('show') || el.settings.classList.contains('show');
+    const uiOpen = el.records.classList.contains('show') || el.settings.classList.contains('show') || el.locker.classList.contains('show');
     if (KEYMAP[k]) { keys[KEYMAP[k]] = true; if (!uiOpen && G.state === 'playing') e.preventDefault(); return; }
     if (k === 'm' || k === 'M') { toggleMute(); return; }
     if (k === 'Escape' && el.records.classList.contains('show')) { closeRecords(); return; }
     if (k === 'Escape' && el.settings.classList.contains('show')) { closeSettings(); return; }
+    if (k === 'Escape' && el.locker.classList.contains('show')) { closeLocker(); return; }
     if (k === 'p' || k === 'P' || k === 'Escape') {
       if (G.state === 'playing') pauseGame(); else if (G.state === 'paused') resumeGame();
       return;
@@ -2460,6 +2932,10 @@
   $('#btn-records').addEventListener('click', () => openRecords('board'));
   $('#btn-over-records').addEventListener('click', () => openRecords('board'));
   $('#btn-records-back').addEventListener('click', closeRecords);
+  $('#btn-locker').addEventListener('click', openLocker);
+  $('#btn-over-locker').addEventListener('click', openLocker);
+  $('#btn-locker-back').addEventListener('click', closeLocker);
+  for (const b of $$('.locker-cat')) b.addEventListener('click', () => { lockerCat = b.dataset.cat; renderLocker(); });
   el.btnShare.addEventListener('click', () => { shareCard().catch(() => shareLabel('Could not create card')); });
   el.btnSettings.addEventListener('click', (e) => { e.currentTarget.blur(); if (G.state === 'playing') pauseGame(); Sfx.init(); openSettings(); });
   $('#btn-settings-back').addEventListener('click', closeSettings);
@@ -2501,6 +2977,13 @@
   window.addEventListener('resize', resize);
 
   // ================================================================ boot
+  for (const [cat, g] of Object.entries(COSMETICS)) {
+    const item = g.items.find((i) => i.id === equip[cat]);
+    if (!item || !itemUnlocked(item)) equip[cat] = g.items[0].id;
+  }
+  checkUnlocks(true);
+  applyTheme();
+  G.bg = themeBg();
   resize();
   buildOrbGuide();
   el.btnMute.setAttribute('aria-pressed', String(Sfx.muted));
@@ -2511,11 +2994,11 @@
 
   // Small hook for automated checks in the browser console.
   window.__bounce = {
-    G, pads, M, Boards, bests, earned, Music, Sfx,
+    G, pads, M, Boards, bests, earned, Music, Sfx, equip, lifetime, COSMETICS, itemUnlocked,
     get balls() { return balls; },
     get targets() { return targets; },
     get bumpers() { return bumpers; },
-    startGame, startRage, startEvent, spawnBoss, levelUp, bossAttack,
+    startGame, startRage, startEvent, spawnBoss, levelUp, bossAttack, openLocker, renderLocker,
     // Advance the simulation by `seconds` at 60 fps (works even when the tab is in the background).
     step(seconds, onFrame) {
       for (let i = 0; i < Math.round(seconds * 60); i++) { if (onFrame) onFrame(); update(1 / 60); }

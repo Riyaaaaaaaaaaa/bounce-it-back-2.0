@@ -12,9 +12,10 @@ Plain HTML, CSS and JavaScript on a `<canvas>`. There's no build step, no librar
 
 | Mode | How it works |
 |---|---|
-| **Classic** | Levels, orbs, bumpers, random events, and a boss every 5 levels. One miss ends the run |
+| **Classic** | Levels, orbs, bumpers, random events, a mini-boss at level 2 and a boss every 3 levels. One miss ends the run |
 | **Survival** | No levels, no orbs, no breaks. The ball speeds up every second. How long can you last? |
 | **60-second rush** | Score as much as you can in a minute. Orbs spawn faster, and a miss costs 3 seconds instead of ending the run |
+| **Boss rush** | Straight into the fights: a mini-boss, then boss after boss, each tougher than the last. Ranked by bosses beaten |
 | **Two players** | Local, on one screen: the bottom player against the top player, first to 5 points. Each rally gets faster |
 
 ## How to play
@@ -66,7 +67,16 @@ Plain HTML, CSS and JavaScript on a `<canvas>`. There's no build step, no librar
 | Invisible ball | The ball keeps disappearing for a moment |
 | Reverse controls | Left is right and right is left |
 
-**Bosses** (Classic, at levels 5, 10, 15 and so on): a boss with a health bar appears in the middle of the court, and every ball hit damages it. It fights back by spitting globs that **stun** a paddle they hit (the paddle shrinks and slows down), **warping** the ball's direction, and dropping **breakable blocks**. Beat it for a bonus of 50 × your level. Levels pause until the boss is defeated.
+**Bosses** show up early and often. In Classic a **mini-boss** appears at level 2 (under 30 seconds in), then a **boss every 3 levels** with mini-bosses in between (levels 2, 3, 5, 6, 8, 9…). **Boss rush** goes straight to them. A boss has a health bar and takes damage every time your ball hits it. Each one is tougher than the last and learns new attacks:
+
+| Attack | What it does | Who uses it |
+|---|---|---|
+| Spit | Fires a glob at each paddle. A hit **stuns** that paddle (it shrinks and slows down for a moment) | Everyone |
+| Warp | Flips the ball's direction | Bosses, and mini-bosses from the second one |
+| Blocks | Drops breakable blocks into the court | From the second boss |
+| Spray | Fires a fan of three globs at each paddle | From the third boss |
+
+Beat a mini-boss for 25 × your level and a boss for 50 × your level (in Boss rush the bonus grows with each one). Levels pause during a fight, the music picks up a drum beat, and the tougher bosses wear a crown.
 
 **Little details**
 
@@ -80,13 +90,34 @@ Plain HTML, CSS and JavaScript on a `<canvas>`. There's no build step, no librar
 **Leaderboards, badges and titles**
 
 - Classic, Survival and Rush each have a **top-10 leaderboard** (Survival ranks by time). If your run makes it, the game-over screen asks for a name.
-- There are **26 badges** to earn, such as *First 100 bounces* (Rally master), *10 perfect hits in a row* (Laser focus), *Survive 60 seconds* (Still standing), *Score 500 without power-ups* (No help needed), *Reach level 10* (Lightspeed), plus ones for Rage mode, bosses, events and more.
-- Badges earn **titles**: Rookie → Rallier (3) → Ace (7) → Maestro (12) → Legend (18) → Bounce Royalty (all 26). Your title is shown on the menu, on your leaderboard entries and on the share card.
+- There are **28 badges** to earn, such as *First 100 bounces* (Rally master), *10 perfect hits in a row* (Laser focus), *Survive 60 seconds* (Still standing), *Score 500 without power-ups* (No help needed), *Reach level 10* (Lightspeed), plus ones for Rage mode, bosses, events and more.
+- Badges earn **titles**: Rookie → Rallier (3) → Ace (7) → Maestro (12) → Legend (18) → Bounce Royalty (all 28). Your title is shown on the menu, on your leaderboard entries and on the share card.
 - Everything is saved in your browser (`localStorage`), so it's per device.
+
+**The Locker (unlockable cosmetics)**
+
+Earn badges and keep playing to unlock new looks, then equip them from the **Locker** on the menu. They are purely cosmetic and never change how the game plays.
+
+| Category | Unlockables |
+|---|---|
+| Ball | Classic, Ringed, Beach ball, Ember glow, Pixel, Star, Eyeball |
+| Paddle | Ink, Candy stripe, Neon, Wood grain, Sunset, Gold |
+| Trail | Dots, Sparkles, Ribbon, Smoke, Hearts |
+| Theme | Paper, Mint, Sunset, Blueprint, Midnight |
+| Bounce effect | Sparks, Confetti pop, Ripple, Ink splash, Starburst |
+
+Each locked item shows what unlocks it, for example *Neon paddles: reach level 5* or *Wood grain: 1,000 bounces in total*. A dot on the Locker button means something new is waiting.
 
 ## What's in 2.0
 
-2.0 is the original game rebuilt in three rounds (v2, v3 and v4 below; v4 is the current version).
+2.0 is the original game rebuilt in rounds (newest first).
+
+### v5
+
+- **Bosses sooner and more often:** a mini-boss at level 2, then a boss every 3 levels with mini-bosses in between. Each one is tougher, and later bosses learn new attacks (blocks, spray).
+- **Boss rush mode:** back-to-back bosses from the first second, with its own leaderboard.
+- **The Locker:** 28 unlockable cosmetics (balls, paddle skins, trails, background themes, bounce effects), unlocked by badges and lifetime stats.
+- **2 new badges:** Gauntlet and Monster hunter (28 in total).
 
 ### v4
 
@@ -94,10 +125,10 @@ Plain HTML, CSS and JavaScript on a `<canvas>`. There's no build step, no librar
 - **Combo tiers** at 5, 10 and 20 perfect hits, with an announcer, glowing trails, stronger shake and rising sound.
 - **Rage mode** at 20 perfect hits in a row (again at 30, 40 and so on), with ×3 points, a red screen, a fiery ball, faster music and a survival bonus.
 - **Random events:** gravity shift, chaos mode, double points, invisible ball and reverse controls.
-- **Bosses** every 5 levels in Classic, with stun globs, ball warps and breakable blocks.
 - **Background music,** generated in the browser, which gets more intense in boss fights and Rage mode. Plus three **sound packs**.
 - **Little details:** near-miss markers, danger slow-mo, a rare last chance, a personal-best ghost, score milestones, a share-able score card, and run stats on the pause screen.
 - **Achievements:** 26 badges (up from 12), titles, and a leaderboard for each mode.
+- **Bosses** first appeared here, every 5 levels.
 
 ### v3
 
