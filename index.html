@@ -73,7 +73,8 @@
       <p class="eyebrow">An arcade game · the sequel</p>
       <h1 id="title" class="title"><span>Bounce</span> <em>it</em> <span>Back</span> <span class="ver">2.0</span></h1>
       <div class="modes" role="radiogroup" aria-label="Game mode">
-        <button class="mode" type="button" role="radio" data-mode="classic" aria-checked="true"><b>Classic</b><small>Levels, orbs, events &amp; bosses</small><span class="mode-best"></span></button>
+        <button class="mode" type="button" role="radio" data-mode="classic" aria-checked="true"><b>Classic</b><small>Just bounce. Gets faster.</small><span class="mode-best"></span></button>
+        <button class="mode" type="button" role="radio" data-mode="chaos" aria-checked="false"><b>Chaos</b><small>Bosses, events &amp; bumpers</small><span class="mode-best"></span></button>
         <button class="mode" type="button" role="radio" data-mode="survival" aria-checked="false"><b>Survival</b><small>No breaks. Always faster.</small><span class="mode-best"></span></button>
         <button class="mode" type="button" role="radio" data-mode="rush" aria-checked="false"><b>60-second rush</b><small>Max points in a minute</small><span class="mode-best"></span></button>
         <button class="mode" type="button" role="radio" data-mode="bossrush" aria-checked="false"><b>Boss rush</b><small>Boss after boss, tougher each time</small><span class="mode-best"></span></button>
@@ -145,6 +146,7 @@
       <div class="panel" id="panel-board" role="tabpanel" aria-labelledby="tab-board">
         <div class="seg" role="group" aria-label="Leaderboard mode">
           <button class="board-mode" type="button" data-mode="classic" aria-pressed="true">Classic</button>
+          <button class="board-mode" type="button" data-mode="chaos" aria-pressed="false">Chaos</button>
           <button class="board-mode" type="button" data-mode="survival" aria-pressed="false">Survival</button>
           <button class="board-mode" type="button" data-mode="rush" aria-pressed="false">Rush</button>
           <button class="board-mode" type="button" data-mode="bossrush" aria-pressed="false">Boss rush</button>
@@ -159,7 +161,7 @@
       </div>
       <div class="panel" id="panel-orbs" role="tabpanel" aria-labelledby="tab-orbs" hidden>
         <div class="orbs" id="orb-grid"></div>
-        <p class="note">Classic also has a mini-boss at level 2, a boss every 3 levels, bumpers from level 3 and random events from level 2.</p>
+        <p class="note">Chaos mode adds a mini-boss at level 2, a boss every 3 levels, bumpers from level 3 and random events from level 2.</p>
       </div>
       <button class="btn primary" id="btn-records-back" type="button">Back</button>
     </div>

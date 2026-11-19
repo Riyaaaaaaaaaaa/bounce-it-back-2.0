@@ -54,7 +54,8 @@
   const MILESTONES = [100, 500, 1000, 2000, 5000, 10000];
 
   const MODES = {
-    classic:  { name: 'Classic', desc: 'Levels, orbs, random events, and a boss every 5 levels.', unit: 'points' },
+    classic:  { name: 'Classic', desc: 'Just bounce. Combos, power-ups, and a ball that keeps getting faster.', unit: 'points' },
+    chaos:    { name: 'Chaos', desc: 'Everything at once: bosses, random events and bumpers.', unit: 'points' },
     survival: { name: 'Survival', desc: 'No levels, no orbs, no breaks. It just keeps getting faster.', unit: 'survived' },
     rush:     { name: '60-second rush', desc: 'Score as much as you can in 60 seconds. A miss costs 3 s.', unit: 'points in 60 s' },
     bossrush: { name: 'Boss rush', desc: 'Boss after boss, each one tougher. How many can you beat?', unit: 'bosses beaten' },
@@ -109,9 +110,9 @@
     { id: 'rage', icon: '!!', name: 'Seeing red', desc: 'Trigger Rage mode (20 perfect in a row)' },
     { id: 'rageSurvive', icon: '♨', name: 'Rage tamed', desc: 'Survive the full 10 s of Rage mode' },
     { id: 'bounce100', icon: '100', name: 'Rally master', desc: '100 bounces in one run' },
-    { id: 'survive60', icon: '60s', name: 'Still standing', desc: 'Survive 60 seconds in Classic or Survival' },
+    { id: 'survive60', icon: '60s', name: 'Still standing', desc: 'Survive 60 seconds in Classic, Chaos or Survival' },
     { id: 'survival120', icon: '2m', name: 'Iron will', desc: 'Last 2 minutes in Survival' },
-    { id: 'pure500', icon: '○5', name: 'No help needed', desc: 'Score 500 in Classic without collecting an orb' },
+    { id: 'pure500', icon: '○5', name: 'No help needed', desc: 'Score 500 in Classic or Chaos without collecting an orb' },
     { id: 'lvl5', icon: 'L5', name: 'Speed demon', desc: 'Reach level 5' },
     { id: 'lvl10', icon: 'L10', name: 'Lightspeed', desc: 'Reach level 10' },
     { id: 's100', icon: '1C', name: 'Century', desc: 'Score 100 in one run' },
@@ -119,7 +120,7 @@
     { id: 'milestone1000', icon: '1K', name: 'Four digits', desc: 'Score 1,000 in one run' },
     { id: 'boss', icon: '☠', name: 'Boss slayer', desc: 'Defeat a boss' },
     { id: 'rush100', icon: '⏱', name: 'Rush hour', desc: '100 points in a 60-second rush' },
-    { id: 'chaos5', icon: '≈', name: 'Chaos theory', desc: 'Survive 5 events in one run' },
+    { id: 'chaos5', icon: '≈', name: 'Chaos theory', desc: 'Survive 5 events in one run (Chaos or Rush)' },
     { id: 'secondwind', icon: '↺', name: 'Second wind', desc: 'Get a last chance' },
     { id: 'clutch', icon: '⚡', name: 'Clutch', desc: 'Save the ball during danger slow-mo' },
     { id: 'circus', icon: '5●', name: 'Circus act', desc: 'Have 5 balls in play at once' },
@@ -414,7 +415,7 @@
       .sort((a, b) => b.score - a.score)
       .slice(0, 10);
   }
-  const Boards = { classic: loadBoard('classic'), survival: loadBoard('survival'), rush: loadBoard('rush'), bossrush: loadBoard('bossrush') };
+  const Boards = { classic: loadBoard('classic'), chaos: loadBoard('chaos'), survival: loadBoard('survival'), rush: loadBoard('rush'), bossrush: loadBoard('bossrush') };
   const bests = {};
   for (const m of Object.keys(Boards)) bests[m] = Math.max(+store.get(bestKey(m), 0) || 0, Boards[m][0] ? Boards[m][0].score : 0);
   const qualifies = (m, score) => !!Boards[m] && score > 0 && (Boards[m].length < 10 || score > Boards[m][Boards[m].length - 1].score);
@@ -578,10 +579,11 @@
   const keys = { a: false, d: false, left: false, right: false };
 
   const single = () => G.mode !== 'duel';
+  const leveled = () => G.mode === 'classic' || G.mode === 'chaos'; // modes with levels, banners and the speed-per-level curve
   const has = {
-    orbs: () => G.mode === 'classic' || G.mode === 'rush' || G.mode === 'bossrush',
-    events: () => (G.mode === 'classic' && G.level >= 2) || (G.mode === 'rush' && G.elapsed > 12),
-    lastChance: () => G.mode === 'classic' || G.mode === 'survival',
+    orbs: () => leveled() || G.mode === 'rush' || G.mode === 'bossrush',
+    events: () => (G.mode === 'chaos' && G.level >= 2) || (G.mode === 'rush' && G.elapsed > 12),
+    lastChance: () => leveled() || G.mode === 'survival',
   };
   const evOn = (type) => !!(G.event && G.event.type === type && G.event.t >= EVENT_WARN);
 
@@ -722,7 +724,7 @@
       lastChanceAvail: Math.random() < 0.5, milestoneIdx: 0, dangerSlow: false,
       p1: 0, p2: 0, rally: 0, longestRally: 0,
       timeline: [], tlNext: 1, nearMarks: [], lastTick: 99,
-      ghost: (G.mode === 'classic' || G.mode === 'rush') ? store.get('bib.ghost.' + G.mode, null) : null,
+      ghost: (leveled() || G.mode === 'rush') ? store.get('bib.ghost.' + G.mode, null) : null,
       run: newRun(),
     });
     if (!Array.isArray(G.ghost)) G.ghost = null;
@@ -790,12 +792,12 @@
   function levelUp() {
     G.level++;
     G.bannerT = 1.5;
-    const boss = bossKindForLevel(G.level);
+    const boss = G.mode === 'chaos' ? bossKindForLevel(G.level) : null;
     el.bannerKicker.textContent = 'Level';
     el.bannerNum.textContent = G.level;
     el.bannerSub.textContent = boss === 'boss' ? 'boss incoming!' : boss === 'mini' ? 'mini-boss incoming!' : UNLOCKS[G.level] || 'speed ' + speedLabel();
     restartAnim(el.banner, 'show');
-    syncBumpers();
+    if (G.mode === 'chaos') syncBumpers();
     Sfx.level();
     flash(0.18, C.sage);
     ring(W / 2, H / 2, Math.max(W, H) * 0.7, C.sage, 6, 0.9);
@@ -824,7 +826,7 @@
     if (G.score >= 100) unlock('s100');
     if (G.score >= 500) unlock('s500');
     if (G.score >= 1000) unlock('milestone1000');
-    if (G.mode === 'classic' && G.score >= 500 && G.run.orbs === 0) unlock('pure500');
+    if (leveled() && G.score >= 500 && G.run.orbs === 0) unlock('pure500');
     if (G.mode === 'rush' && G.score >= 100) unlock('rush100');
     return pts;
   }
@@ -843,7 +845,7 @@
     const m = G.mode;
     const S = el.s;
     const set = (i, label, value) => { setText(S[i].label, label); setText(S[i].value, value); };
-    if (m === 'classic') { set(0, 'Score', String(G.score)); set(1, 'Level', String(G.level)); set(2, 'Speed', speedLabel()); }
+    if (m === 'classic' || m === 'chaos') { set(0, 'Score', String(G.score)); set(1, 'Level', String(G.level)); set(2, 'Speed', speedLabel()); }
     else if (m === 'survival') { set(0, 'Time', fmtTime(G.elapsed)); set(1, 'Bounces', String(G.hits)); set(2, 'Speed', speedLabel()); }
     else if (m === 'rush') { set(0, 'Score', String(G.score)); set(1, 'Time', fmtClock(G.timeLeft)); set(2, 'Speed', speedLabel()); }
     else if (m === 'bossrush') { set(0, 'Score', String(G.score)); set(1, 'Bosses', String(G.run.bosses)); set(2, 'Speed', speedLabel()); }
@@ -945,7 +947,7 @@
       if (G.streak >= 10) unlock('perfect10');
       if (G.hits >= 100) unlock('bounce100');
       if (G.fx.shrink > 0 && ++G.run.shrinkHits >= 5) unlock('tiny');
-      if (G.mode === 'classic' && !G.boss && G.bossDelay <= 0 && ++G.levelHits >= LEVEL_HITS) { G.levelHits = 0; levelUp(); }
+      if (leveled() && !G.boss && G.bossDelay <= 0 && ++G.levelHits >= LEVEL_HITS) { G.levelHits = 0; levelUp(); }
       updateHud();
       Sfx.bounce(G.streak + Math.min(G.level - 1, 5), perfect, tier);
     }
@@ -1435,13 +1437,13 @@
       if (isBest) {
         bests[m] = value;
         store.set(bestKey(m), value);
-        if (m === 'classic' || m === 'rush') store.set('bib.ghost.' + m, G.timeline.concat([G.score]).slice(0, 3600));
+        if (m === 'classic' || m === 'chaos' || m === 'rush') store.set('bib.ghost.' + m, G.timeline.concat([G.score]).slice(0, 3600));
       }
       el.overEyebrow.textContent = MODES[m].name + ' · game over';
       setTitle(m === 'rush' ? 'Time’s up!' : 'Missed it.');
       el.overScore.textContent = fmtScore(m, value);
       el.overUnit.textContent = MODES[m].unit;
-      if (m === 'classic') stats.push(['Best', fmtScore(m, bests[m])], ['Level', G.level], ['Bounces', G.hits], ['Top streak', G.bestStreak]);
+      if (m === 'classic' || m === 'chaos') stats.push(['Best', fmtScore(m, bests[m])], ['Level', G.level], ['Bounces', G.hits], ['Top streak', G.bestStreak]);
       if (m === 'survival') stats.push(['Best', fmtScore(m, bests[m])], ['Bounces', G.hits], ['Top streak', G.bestStreak], ['Top speed', G.topSpeed.toFixed(1) + '×']);
       if (m === 'rush') stats.push(['Best', fmtScore(m, bests[m])], ['Bounces', G.hits], ['Top streak', G.bestStreak], ['Orbs', G.run.orbs]);
       if (m === 'bossrush') stats.push(['Best', fmtScore(m, bests[m])], ['Points', G.score], ['Bounces', G.hits], ['Top streak', G.bestStreak]);
@@ -1489,7 +1491,7 @@
     if (G.mode === 'duel') s.push(['Score', `${G.p1}–${G.p2}`], ['Rally', G.rally], ['Longest rally', G.longestRally], ['Speed', speedLabel()]);
     else {
       s.push(['Score', G.score]);
-      if (G.mode === 'classic') s.push(['Level', G.level]);
+      if (leveled()) s.push(['Level', G.level]);
       if (G.mode === 'rush') s.push(['Time left', fmtClock(G.timeLeft)]);
       s.push(['Bounces', G.hits], ['Perfect hits', pct], ['Streak', G.streak], ['Top streak', G.bestStreak], ['Speed', speedLabel()]);
       if (G.mode !== 'survival') s.push(['Orbs', G.run.orbs], ['Events', G.run.events]);
@@ -1542,7 +1544,7 @@
     c.fillStyle = C.ink;
     c.font = `600 28px ${FONT_SANS}`;
     const line = m === 'duel' ? `Longest rally ${G.longestRally} · ${G.hits} bounces`
-      : `${m === 'classic' ? 'Level ' + G.level + ' · ' : m === 'bossrush' ? G.score + ' points · ' : ''}${G.hits} bounces · top streak ${G.bestStreak}`;
+      : `${m === 'classic' || m === 'chaos' ? 'Level ' + G.level + ' · ' : m === 'bossrush' ? G.score + ' points · ' : ''}${G.hits} bounces · top streak ${G.bestStreak}`;
     c.fillText(line, 84, 440, 700);
     c.font = `24px ${FONT_MONO}`;
     const name = cleanName(store.get('bib.name', ''));
@@ -1593,7 +1595,7 @@
       const nm = document.createElement('b'); nm.textContent = e.name;
       who.append(nm);
       if (e.title) { const t = document.createElement('small'); t.textContent = e.title; who.append(t); }
-      const lvl = document.createElement('span'); lvl.className = 'lvl'; lvl.textContent = m === 'classic' ? 'L' + e.level : '';
+      const lvl = document.createElement('span'); lvl.className = 'lvl'; lvl.textContent = m === 'classic' || m === 'chaos' ? 'L' + e.level : '';
       const sc = document.createElement('span'); sc.className = 'pts'; sc.textContent = fmtScore(m, e.score);
       li.append(rank, who, lvl, sc);
       el.boardList.append(li);
@@ -1828,7 +1830,7 @@
       G.elapsed += dt;
       G.topSpeed = Math.max(G.topSpeed, speedRatio());
       while (G.elapsed >= G.tlNext) { G.timeline.push(G.score); G.tlNext++; }
-      if (G.elapsed >= 60 && (G.mode === 'classic' || G.mode === 'survival')) unlock('survive60');
+      if (G.elapsed >= 60 && (leveled() || G.mode === 'survival')) unlock('survive60');
       if (G.mode === 'survival' && G.elapsed >= 120) unlock('survival120');
       if (G.mode === 'rush') {
         G.timeLeft -= dt;
@@ -1855,7 +1857,7 @@
     // Background tint: per level, red in rage, cool in duel.
     let tint = levelTint(0);
     if (G.state !== 'menu') {
-      if (G.mode === 'classic') tint = levelTint(G.level - 1);
+      if (leveled()) tint = levelTint(G.level - 1);
       if (G.mode === 'survival') tint = levelTint(Math.floor(G.elapsed / 30));
       if (G.mode === 'bossrush') tint = levelTint(G.run.bosses);
       if (G.mode === 'duel') tint = duelTint();

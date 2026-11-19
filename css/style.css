@@ -719,7 +719,7 @@ h1.title { position: relative; }
 }
 
 /* =================================================================== Boss rush + Locker */
-.modes .mode[data-mode="duel"] { grid-column: span 2; }
+/* six modes: a tidy 2×3 grid */
 .btn-row .btn { white-space: nowrap; }
 .boss-bar.mini { background: var(--slate); box-shadow: 3px 3px 0 var(--ink); }
 .boss-bar.mini small { color: var(--sand); }
@@ -777,3 +777,6 @@ body.dark .stat.ghost.ahead .value { color: #9fd08f; }
   .btn-row .btn { font-size: 15px; padding: 10px 8px; }
 }
 @media (prefers-reduced-motion: reduce) { .locker-dot { animation: none; } }
+
+.board-mode { white-space: nowrap; }
+@media (max-width: 420px) { .seg .board-mode { font-size: 12px; padding: 7px 3px; } }

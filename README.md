@@ -12,7 +12,8 @@ Plain HTML, CSS and JavaScript on a `<canvas>`. There's no build step, no librar
 
 | Mode | How it works |
 |---|---|
-| **Classic** | Levels, orbs, bumpers, random events, a mini-boss at level 2 and a boss every 3 levels. One miss ends the run |
+| **Classic** | Just bounce. Combos, Rage mode, power-up orbs, and a ball that gets faster every level. One miss ends the run |
+| **Chaos** | Everything at once: Classic plus a mini-boss at level 2, a boss every 3 levels, random events and bumpers |
 | **Survival** | No levels, no orbs, no breaks. The ball speeds up every second. How long can you last? |
 | **60-second rush** | Score as much as you can in a minute. Orbs spawn faster, and a miss costs 3 seconds instead of ending the run |
 | **Boss rush** | Straight into the fights: a mini-boss, then boss after boss, each tougher than the last. Ranked by bosses beaten |
@@ -42,9 +43,9 @@ Plain HTML, CSS and JavaScript on a `<canvas>`. There's no build step, no librar
 
   As the combo grows, the ball's trail gets longer and starts to glow, the screen shakes harder, the flashes get brighter, and the bounce sounds climb higher.
 - **Rage mode** lasts 10 seconds. The ball moves faster, every bounce earns **×3** points, the ball leaves a fiery trail, the background turns red, and the music speeds up with drums. Survive all 10 seconds for a big bonus: +250 the first time, +500 the second, and so on.
-- In Classic you go up a level every **8 bounces**. Level 1 is gentle, and each level makes the ball noticeably faster. The **Speed** readout shows how fast it is compared with the start.
+- In Classic and Chaos you go up a level every **8 bounces**. Level 1 is gentle, and each level makes the ball noticeably faster. The **Speed** readout shows how fast it is compared with the start.
 
-**Orbs** (Classic and Rush) float in the middle of the court. Steer the ball through one to collect it. New kinds unlock as you level up:
+**Orbs** (Classic, Chaos, Rush and Boss rush) float in the middle of the court. Steer the ball through one to collect it. New kinds unlock as you level up:
 
 | Orb | From | Effect |
 |---|---|---|
@@ -57,7 +58,7 @@ Plain HTML, CSS and JavaScript on a `<canvas>`. There's no build step, no librar
 | 2× Rust | L3 | Double points for 8 seconds, and the ball becomes a fireball |
 | →← Ink | L4 | **Bad orb!** Shrinks your paddles for 7 seconds. Steer around it |
 
-**Special events** (Classic from level 2, and Rush) arrive at random with a 2-second warning and last 7 seconds:
+**Special events** (Chaos from level 2, and Rush) arrive at random with a 2-second warning and last 7 seconds:
 
 | Event | What happens |
 |---|---|
@@ -67,7 +68,7 @@ Plain HTML, CSS and JavaScript on a `<canvas>`. There's no build step, no librar
 | Invisible ball | The ball keeps disappearing for a moment |
 | Reverse controls | Left is right and right is left |
 
-**Bosses** show up early and often. In Classic a **mini-boss** appears at level 2 (under 30 seconds in), then a **boss every 3 levels** with mini-bosses in between (levels 2, 3, 5, 6, 8, 9…). **Boss rush** goes straight to them. A boss has a health bar and takes damage every time your ball hits it. Each one is tougher than the last and learns new attacks:
+**Bosses** show up early and often. In Chaos a **mini-boss** appears at level 2 (under 30 seconds in), then a **boss every 3 levels** with mini-bosses in between (levels 2, 3, 5, 6, 8, 9…). **Boss rush** goes straight to them. A boss has a health bar and takes damage every time your ball hits it. Each one is tougher than the last and learns new attacks:
 
 | Attack | What it does | Who uses it |
 |---|---|---|
@@ -82,14 +83,14 @@ Beat a mini-boss for 25 × your level and a boss for 50 × your level (in Boss r
 
 - **Near miss:** when the ball just slips past a paddle, a marker shows the gap ("so close! 6px").
 - **Danger slow-mo:** when your last ball is about to slip past a paddle, time slows down hard and you hear a heartbeat, so you get one more chance to reach it. Saving it counts as a *clutch save*.
-- **Last chance:** once in a while (once per run at most, in Classic and Survival), a miss gives you a surprise second serve.
+- **Last chance:** once in a while (once per run at most, in Classic, Chaos and Survival), a miss gives you a surprise second serve.
 - **Personal-best ghost:** the HUD shows **vs PB**, how far ahead or behind your best run you were at the same moment.
 - **Score milestones:** 100, 500, 1,000 and more each get a confetti burst and a big announcement.
 - **Share score:** the game-over screen makes a score-card image. It opens the share sheet on phones and downloads the image elsewhere.
 
 **Leaderboards, badges and titles**
 
-- Classic, Survival and Rush each have a **top-10 leaderboard** (Survival ranks by time). If your run makes it, the game-over screen asks for a name.
+- Every single-player mode has its own **top-10 leaderboard** (Survival ranks by time). If your run makes it, the game-over screen asks for a name.
 - There are **28 badges** to earn, such as *First 100 bounces* (Rally master), *10 perfect hits in a row* (Laser focus), *Survive 60 seconds* (Still standing), *Score 500 without power-ups* (No help needed), *Reach level 10* (Lightspeed), plus ones for Rage mode, bosses, events and more.
 - Badges earn **titles**: Rookie → Rallier (3) → Ace (7) → Maestro (12) → Legend (18) → Bounce Royalty (all 28). Your title is shown on the menu, on your leaderboard entries and on the share card.
 - Everything is saved in your browser (`localStorage`), so it's per device.
@@ -111,6 +112,10 @@ Each locked item shows what unlocks it, for example *Neon paddles: reach level 5
 ## What's in 2.0
 
 2.0 is the original game rebuilt in rounds (newest first).
+
+### v5.1
+
+- **Classic is simple again:** just bouncing, combos, Rage mode, orbs and the speed-up. Bosses, events and bumpers moved to the new **Chaos** mode.
 
 ### v5
 
