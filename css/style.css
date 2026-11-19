@@ -700,3 +700,20 @@ kbd {
   .announce.show, .announce.rage.show { animation: bannerCalm 1.2s linear forwards; }
   .combo[data-tier="rage"], .event-banner.warn, .boss-bar, .boss-bar.hit { animation: none; }
 }
+
+/* "2.0" stamp next to the title */
+h1.title { position: relative; }
+.title .ver {
+  position: absolute;
+  right: -14px;
+  top: -16px;
+  padding: 3px 8px 4px;
+  font: 800 .32em/1 var(--sans);
+  letter-spacing: 0;
+  color: var(--paper);
+  background: var(--rust);
+  border: 2px solid var(--ink);
+  border-radius: 8px;
+  box-shadow: 2px 2px 0 var(--ink);
+  transform: rotate(-6deg);
+}

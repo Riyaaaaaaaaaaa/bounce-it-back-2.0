@@ -1,8 +1,8 @@
-# Bounce it Back
+# Bounce it Back 2.0
 
 A small arcade game for the browser. Two mirrored paddles, one at the top and one at the bottom, move together. Keep the ball between them: every bounce scores, perfect centre hits build combos up to Rage mode, and one miss ends the run.
 
-**Play:** https://bounce-it-back-game.vercel.app
+The sequel to [Bounce it Back](https://github.com/Riyaaaaaaaaaaa/bounce-it-back-game), the paddle game I built in May–June 2025. The original stays as it was, and 2.0 is its own project.
 
 Plain HTML, CSS and JavaScript on a `<canvas>`. There's no build step, no libraries and no asset files, and all the sound is generated in the browser.
 
@@ -82,7 +82,11 @@ Plain HTML, CSS and JavaScript on a `<canvas>`. There's no build step, no librar
 - Badges earn **titles**: Rookie → Rallier (3) → Ace (7) → Maestro (12) → Legend (18) → Bounce Royalty (all 26). Your title is shown on the menu, on your leaderboard entries and on the share card.
 - Everything is saved in your browser (`localStorage`), so it's per device.
 
-## What's new in v4
+## What's in 2.0
+
+2.0 is the original game rebuilt in three rounds (v2, v3 and v4 below; v4 is the current version).
+
+### v4
 
 - **Four modes:** Classic, Survival, 60-second Rush and local Two-player.
 - **Combo tiers** at 5, 10 and 20 perfect hits, with an announcer, glowing trails, stronger shake and rising sound.
@@ -93,7 +97,7 @@ Plain HTML, CSS and JavaScript on a `<canvas>`. There's no build step, no librar
 - **Little details:** near-miss markers, danger slow-mo, a rare last chance, a personal-best ghost, score milestones, a share-able score card, and run stats on the pause screen.
 - **Achievements:** 26 badges (up from 12), titles, and a leaderboard for each mode.
 
-## What's new in v3
+### v3
 
 - **A real difficulty curve:** level 1 is slower than before, each level gives a clear speed boost (with a level-up banner and a speed readout), and levels come every 8 bounces.
 - **Four new orbs:** shield, magnet, double points and a bad shrink orb. Orbs unlock level by level, and up to 3 can be on screen from level 4.
@@ -102,9 +106,9 @@ Plain HTML, CSS and JavaScript on a `<canvas>`. There's no build step, no librar
 - **Level atmosphere:** the background tint shifts and the dot grid drifts faster as you climb.
 - **Bug fix:** an item that appeared at the exact moment it spawned could crash the drawing loop and freeze the game. The pop-in easing can no longer go negative, and the loop now schedules its next frame before it draws.
 
-## What's new in v2
+### v2
 
-Version 1 (May–June 2025) was the basic paddle-and-ball loop. Version 2 rebuilds it around game feel:
+The original (May–June 2025) was the basic paddle-and-ball loop. v2 rebuilt it around game feel:
 
 - **Juice:** screen shake on hits, spark and particle bursts, shockwave rings, a fading ball trail, squash and stretch on the ball, paddle hit-flash and recoil, paddle tilt as you move, and a short hit-stop on perfect hits.
 - **Slow-motion game over:** time slows, the camera zooms in on the miss and the screen flashes before the results appear.
@@ -120,10 +124,10 @@ Version 1 (May–June 2025) was the basic paddle-and-ball loop. Version 2 rebuil
 
 ## Run it locally
 
-Open `bounce it back/index.html` in a browser, or serve the folder:
+Open `index.html` in a browser, or serve the folder:
 
 ```bash
-cd "bounce it back" && python3 -m http.server 8000
+python3 -m http.server 8000
 ```
 
 Then visit http://localhost:8000.
@@ -131,13 +135,12 @@ Then visit http://localhost:8000.
 ## Files
 
 ```
-bounce it back/
 ├── index.html      # markup: canvas, HUD, banners, and the menu / pause / game-over / hall-of-fame / settings screens
 ├── css/style.css   # layout, overlays and UI animations
 └── js/game.js      # game loop, modes, physics, combos, events, bosses, effects, audio and music, leaderboards and badges
 ```
 
-The Vercel project serves the `bounce it back/` folder as the site root.
+Everything lives at the repo root, so any static host (GitHub Pages, Vercel, Netlify) can serve it as is.
 
 ---
 

@@ -1,4 +1,4 @@
-/* Bounce it Back — v4
+/* Bounce it Back 2.0
  * Two mirrored paddles keep a ball alive. Every bounce scores, perfect centre hits build a combo,
  * and a miss ends the run. Modes: Classic, Survival, 60-second Rush and local Two-player.
  * Plain canvas + Web Audio, no build step, no assets.
@@ -1374,7 +1374,7 @@
     // text
     c.fillStyle = C.ink;
     c.font = `22px ${FONT_MONO}`;
-    c.fillText(`BOUNCE IT BACK · ${MODES[m].name.toUpperCase()}`, 84, 108);
+    c.fillText(`BOUNCE IT BACK 2.0 · ${MODES[m].name.toUpperCase()}`, 84, 108);
     const big = m === 'duel' ? `${G.p1}–${G.p2}` : fmtScore(m, m === 'survival' ? Math.round(G.elapsed * 10) / 10 : G.score);
     c.font = `800 190px ${FONT_SANS}`;
     c.fillText(big, 76, 300, 700);
@@ -1390,7 +1390,8 @@
     const name = cleanName(store.get('bib.name', ''));
     c.fillText(`${name ? name + ' · ' : ''}${currentTitle()} · ${earned.size}/${BADGES.length} badges`, 84, 490, 720);
     c.fillStyle = C.rust;
-    c.fillText('bounce-it-back-game.vercel.app', 84, 540);
+    // wherever the game is hosted, without the protocol or a trailing index.html
+    c.fillText((location.host + location.pathname).replace(/index\.html$/, '').replace(/\/$/, ''), 84, 540, 720);
     // art: paddles, ball and trail
     c.fillStyle = C.ink;
     c.fillRect(840, 120, 220, 16); c.fillRect(840, 480, 220, 16);
@@ -1407,9 +1408,9 @@
     const blob = await new Promise((r) => cv.toBlob(r, 'image/png'));
     if (!blob) { shareLabel('Could not create card'); return; }
     const file = new File([blob], 'bounce-it-back-score.png', { type: 'image/png' });
-    const text = m === 'duel' ? `We just played Bounce it Back: ${big}!` : `I got ${big} ${MODES[m].unit} in Bounce it Back (${MODES[m].name}). Can you beat it?`;
+    const text = m === 'duel' ? `We just played Bounce it Back 2.0: ${big}!` : `I got ${big} ${MODES[m].unit} in Bounce it Back 2.0 (${MODES[m].name}). Can you beat it?`;
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      try { await navigator.share({ files: [file], title: 'Bounce it Back', text }); shareLabel('Shared!'); return; }
+      try { await navigator.share({ files: [file], title: 'Bounce it Back 2.0', text }); shareLabel('Shared!'); return; }
       catch (e) { if (e && e.name === 'AbortError') return; }
     }
     const url = URL.createObjectURL(blob);
