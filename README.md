@@ -90,10 +90,11 @@ Beat a mini-boss for 25 × your level and a boss for 50 × your level (in Boss r
 
 **Leaderboards, badges and titles**
 
-- Every single-player mode has its own **top-10 leaderboard** (Survival ranks by time). If your run makes it, the game-over screen asks for a name.
+- Every single-player mode has its own **online top-10 leaderboard** shared by everyone who plays (Survival ranks by time, Boss rush by bosses beaten). After a run, type a name and press **Save** to put your score on it. Each player keeps one entry per mode, their best, and the Hall of fame shows where you rank.
+- If the online leaderboard can't be reached, the game falls back to a top 10 kept in your own browser.
 - There are **28 badges** to earn, such as *First 100 bounces* (Rally master), *10 perfect hits in a row* (Laser focus), *Survive 60 seconds* (Still standing), *Score 500 without power-ups* (No help needed), *Reach level 10* (Lightspeed), plus ones for Rage mode, bosses, events and more.
 - Badges earn **titles**: Rookie → Rallier (3) → Ace (7) → Maestro (12) → Legend (18) → Bounce Royalty (all 28). Your title is shown on the menu, on your leaderboard entries and on the share card.
-- Everything is saved in your browser (`localStorage`), so it's per device.
+- Badges, titles, settings and Locker unlocks are saved in your browser (`localStorage`), so they're per device.
 
 **The Locker (unlockable cosmetics)**
 
@@ -160,6 +161,26 @@ The original (May–June 2025) was the basic paddle-and-ball loop. v2 rebuilt it
 - **Accessibility:** follows `prefers-reduced-motion`, which turns off screen shake and death zoom and tones down flashes, particles and trails. All menus work from the keyboard.
 - **Look:** a muted editorial palette (ink, paper, rust, rose, sand, sage, slate) with Bricolage Grotesque, Instrument Serif and Cutive Mono.
 
+## Online leaderboard (setup)
+
+The shared leaderboard is a small Vercel serverless function, [`api/scores.js`](api/scores.js), that stores scores in an **Upstash Redis** database. The database credentials stay on the server and never reach the browser.
+
+To switch it on for a Vercel deployment:
+
+1. In the Vercel project, open **Storage** (or **Integrations → Marketplace**) and add **Upstash → Redis**. The free plan is plenty.
+2. Connect the new database to this project. That adds the `KV_REST_API_URL` / `KV_REST_API_TOKEN` (or `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN`) environment variables.
+3. Redeploy, so the function picks up the variables.
+
+Until then, the game shows each player their own browser's scores.
+
+How it protects the board:
+- Names are trimmed to 12 characters with invisible and control characters removed, and names containing links or `<` / `>` are refused. Names are always shown as plain text.
+- Scores are checked against each mode's limits and the run's length, so impossible numbers are refused.
+- Each IP address can save at most 8 scores a minute (IPs are hashed and forgotten after a minute).
+- Each browser gets a random player ID, so a player has one entry per mode and can only replace it with a better score.
+
+Like any leaderboard for a game that runs in the browser, a determined person could still send a fake but plausible score. If that happens, delete the entry from the Upstash console: scores live in the sorted set `lb:<mode>` and names in the hash `lbm:<mode>`, both keyed by player ID.
+
 ## Run it locally
 
 Open `index.html` in a browser, or serve the folder:
@@ -173,6 +194,7 @@ Then visit http://localhost:8000.
 ## Files
 
 ```
+├── api/scores.js   # online leaderboard (Vercel serverless function + Upstash Redis)
 ├── index.html      # markup: canvas, HUD, banners, and the menu / pause / game-over / hall-of-fame / settings screens
 ├── css/style.css   # layout, overlays and UI animations
 └── js/game.js      # game loop, modes, physics, combos, events, bosses, effects, audio and music, leaderboards and badges

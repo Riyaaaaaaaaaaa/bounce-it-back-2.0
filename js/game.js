@@ -233,7 +233,7 @@
     pauseStats: $('#pause-stats'), pauseMode: $('#pause-mode'),
     overEyebrow: $('#over-eyebrow'), overTitle: $('#over-title'), overScore: $('#over-score'), overUnit: $('#over-unit'),
     overNew: $('#over-newbest'), overStats: $('#over-stats'),
-    nameForm: $('#name-form'), nameInput: $('#name-input'), overRank: $('#over-rank'), rankLine: $('#rank-line'),
+    nameForm: $('#name-form'), nameInput: $('#name-input'), rankLine: $('#rank-line'), boardStatus: $('#board-status'),
     btnShare: $('#btn-share'),
     boardList: $('#board-list'), boardEmpty: $('#board-empty'), badgeGrid: $('#badge-grid'), badgeCount: $('#badge-count'),
     titleLine: $('#title-line'), orbGrid: $('#orb-grid'),
@@ -777,6 +777,7 @@
   }
 
   function refreshMenu() {
+    if (G.mode !== 'duel' && Online.state[G.mode] !== 'loading') Online.load(G.mode);
     el.menuTitle.textContent = currentTitle();
     el.menuBadges.textContent = `${earned.size}/${BADGES.length}`;
     for (const b of $$('.mode')) {
@@ -1451,20 +1452,20 @@
     fillStats(el.overStats, stats);
     el.overNew.hidden = !isBest || value === 0;
 
-    // Leaderboard: offer a name if this run makes the top 10.
-    G.pending = m !== 'duel' && qualifies(m, value);
+    // Leaderboard: any scoring run can be saved to the online board; this browser keeps its own top 10 too.
+    G.pending = m !== 'duel' && value > 0;
+    G.pendingLocal = qualifies(m, value);
     G.pendingValue = value;
+    G.pendingRun = { level: G.level, seconds: Math.round(G.elapsed * 10) / 10, hits: G.hits };
     el.nameForm.hidden = !G.pending;
+    el.nameForm.querySelector('button').disabled = false;
     el.rankLine.hidden = G.pending;
     if (G.pending) {
-      el.overRank.textContent = '#' + rankOf(m, value);
       el.nameInput.value = store.get('bib.name', '');
     } else if (m === 'duel') {
       el.rankLine.textContent = 'Rematch? Same controls, fresh score.';
     } else {
-      const l = Boards[m];
-      const min = l.length ? l[l.length - 1].score : 0;
-      el.rankLine.textContent = value === 0 ? 'Bounce it at least once to get on the board.' : `Top 10 needs ${fmtScore(m, min)}+. So close!`;
+      el.rankLine.textContent = 'Bounce it at least once to get on the leaderboard.';
     }
     resetShareLabel();
     setScreen('over');
@@ -1501,18 +1502,94 @@
     fillStats(el.pauseStats, s);
   }
 
-  // Save the pending leaderboard entry (on submit, or automatically when leaving the screen).
+  // Save the run to this browser's own top 10 (on submit, or automatically when leaving the screen).
+  // Only an explicit "Save" also sends it to the online leaderboard, so no name is published without asking.
   function commitPending() {
-    if (!G.pending) return;
+    if (!G.pending) return null;
     G.pending = false;
     const name = cleanName(el.nameInput.value) || 'Player';
     store.set('bib.name', name);
-    G.lastEntry = { name, score: G.pendingValue, level: G.level, title: currentTitle(), date: Date.now() };
     G.lastEntryMode = G.mode;
-    const rank = addEntry(G.mode, G.lastEntry);
+    if (G.pendingLocal) {
+      G.lastEntry = { name, score: G.pendingValue, level: G.level, title: currentTitle(), date: Date.now() };
+      addEntry(G.mode, G.lastEntry);
+    }
     el.nameForm.hidden = true;
     el.rankLine.hidden = false;
-    el.rankLine.textContent = `Saved as ${name}: #${rank} on the ${MODES[G.mode].name} leaderboard`;
+    el.rankLine.textContent = 'Saved on this device.';
+    return name;
+  }
+
+  // ================================================================ online leaderboard
+  // A random id for this browser, so each player keeps one entry (their best) per mode.
+  const playerId = (() => {
+    let id = store.get('bib.pid', '');
+    if (typeof id !== 'string' || !/^[a-f0-9]{32}$/.test(id)) {
+      const bytes = new Uint8Array(16);
+      crypto.getRandomValues(bytes);
+      id = [...bytes].map((x) => x.toString(16).padStart(2, '0')).join('');
+      store.set('bib.pid', id);
+    }
+    return id;
+  })();
+  const Online = {
+    cache: {},          // mode → { rows, total, you }
+    state: {},          // mode → 'loading' | 'ok' | 'off' | 'error'
+    async request(method, body, query = '') {
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 7000);
+      try {
+        const res = await fetch('/api/scores' + query, {
+          method,
+          signal: ctl.signal,
+          headers: { 'Content-Type': 'application/json', 'x-player-id': playerId },
+          body: body ? JSON.stringify(body) : undefined,
+        });
+        let data = null;
+        try { data = await res.json(); } catch { /* not JSON, e.g. no API on this host */ }
+        return { ok: res.ok && !!data, status: res.status, data };
+      } catch {
+        return { ok: false, status: 0, data: null };
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+    async load(mode) {
+      this.state[mode] = 'loading';
+      const r = await this.request('GET', null, '?mode=' + encodeURIComponent(mode));
+      if (r.ok && Array.isArray(r.data.rows)) {
+        this.cache[mode] = r.data;
+        this.state[mode] = 'ok';
+      } else {
+        this.state[mode] = r.status === 503 ? 'off' : 'error';
+      }
+      return this.cache[mode] || null;
+    },
+  };
+  const ordinal = (n) => n.toLocaleString();
+
+  async function submitOnline(name) {
+    const m = G.mode;
+    el.rankLine.hidden = false;
+    el.rankLine.textContent = 'Saving to the online leaderboard…';
+    const r = await Online.request('POST', {
+      mode: m, pid: playerId, name, score: G.pendingValue, title: currentTitle(), ...G.pendingRun,
+    });
+    if (r.ok) {
+      const d = r.data;
+      el.rankLine.textContent = d.saved
+        ? `Saved as ${name}: #${ordinal(d.rank)} of ${ordinal(d.total)} on the ${MODES[m].name} leaderboard`
+        : `Your best is still ${fmtScore(m, d.best)} (#${ordinal(d.rank)} of ${ordinal(d.total)}). Saved on this device too.`;
+      Online.load(m).then(() => { if (el.records.classList.contains('show')) renderRecords(); });
+    } else if (r.status === 400 || r.status === 429) {
+      el.rankLine.textContent = (r.data && r.data.error ? r.data.error : 'That score couldn’t be saved.') + ' Saved on this device.';
+      if (r.data && /name/i.test(r.data.error || '')) { // let them pick another name (already saved locally, so don't save that twice)
+        G.pending = true; G.pendingLocal = false;
+        el.nameForm.hidden = false; el.nameForm.querySelector('button').disabled = false;
+      }
+    } else {
+      el.rankLine.textContent = 'Couldn’t reach the online leaderboard, so it’s saved on this device.';
+    }
   }
 
   // ================================================================ share card
@@ -1585,11 +1662,26 @@
   function renderRecords() {
     const m = G.boardMode;
     for (const b of $$('.board-mode')) b.setAttribute('aria-pressed', String(b.dataset.mode === m));
+    // Prefer the online board (everyone's scores); fall back to this browser's own top 10.
+    const online = Online.state[m] === 'ok' ? Online.cache[m] : null;
+    const rows = online ? online.rows : Boards[m];
+    const st = Online.state[m];
+    if (online) {
+      const you = online.you;
+      el.boardStatus.textContent = `Everyone’s best · ${ordinal(online.total)} player${online.total === 1 ? '' : 's'}`
+        + (you ? ` · you’re #${ordinal(you.rank)}` : '');
+    } else if (st === 'loading') {
+      el.boardStatus.textContent = 'Loading the online leaderboard…';
+    } else {
+      el.boardStatus.textContent = st === 'off'
+        ? 'The online leaderboard isn’t set up yet, so these are this browser’s scores.'
+        : 'Couldn’t reach the online leaderboard, so these are this browser’s scores.';
+    }
     el.boardList.replaceChildren();
-    el.boardEmpty.hidden = Boards[m].length > 0;
-    Boards[m].forEach((e, i) => {
+    el.boardEmpty.hidden = rows.length > 0;
+    rows.forEach((e, i) => {
       const li = document.createElement('li');
-      if (e === G.lastEntry) li.className = 'me';
+      if (online ? e.you : e === G.lastEntry) li.className = 'me';
       const rank = document.createElement('span'); rank.className = 'rank'; rank.textContent = String(i + 1).padStart(2, '0');
       const who = document.createElement('span'); who.className = 'who';
       const nm = document.createElement('b'); nm.textContent = e.name;
@@ -1643,10 +1735,17 @@
     commitPending();
     G.recordsFrom = el.over.classList.contains('show') ? 'over' : 'menu';
     G.boardMode = G.recordsFrom === 'over' && G.lastEntryMode ? G.lastEntryMode : (G.mode === 'duel' ? 'classic' : G.mode);
-    renderRecords();
+    refreshBoard(G.boardMode);
     selectTab(tab || 'board');
     setScreen('records');
     $('#btn-records-back').focus({ preventScroll: true });
+  }
+  // Show what we have right away, then refresh from the server and redraw if this board is still open.
+  function refreshBoard(m) {
+    renderRecords();
+    if (Online.state[m] === 'loading') return;
+    if (Online.state[m] !== 'ok') { Online.state[m] = 'loading'; renderRecords(); }
+    Online.load(m).then(() => { if (el.records.classList.contains('show') && G.boardMode === m) renderRecords(); });
   }
   function closeRecords() {
     setScreen(G.recordsFrom);
@@ -2955,11 +3054,13 @@
     Music.toggle(!Music.on);
     el.musicToggle.setAttribute('aria-checked', String(Music.on));
   });
-  for (const b of $$('.board-mode')) b.addEventListener('click', () => { G.boardMode = b.dataset.mode; renderRecords(); });
+  for (const b of $$('.board-mode')) b.addEventListener('click', () => { G.boardMode = b.dataset.mode; refreshBoard(G.boardMode); });
   el.nameForm.addEventListener('submit', (e) => {
     e.preventDefault();
-    commitPending();
+    el.nameForm.querySelector('button').disabled = true;
+    const name = commitPending();
     Sfx.click();
+    if (name) submitOnline(name);
     $('#btn-again').focus({ preventScroll: true });
   });
   for (const t of $$('[role="tab"]')) {

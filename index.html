@@ -117,7 +117,7 @@
       </div>
       <dl class="stats" id="over-stats"></dl>
       <form class="name-form" id="name-form" hidden>
-        <label for="name-input">You placed <b id="over-rank">#1</b>! Sign the leaderboard</label>
+        <label for="name-input">Put your name on the <b>online leaderboard</b></label>
         <div class="row">
           <input id="name-input" name="name" maxlength="12" autocomplete="nickname" spellcheck="false" placeholder="Your name" enterkeyhint="done">
           <button class="btn small" type="submit">Save</button>
@@ -153,7 +153,7 @@
         </div>
         <ol class="board" id="board-list"></ol>
         <p class="empty" id="board-empty">No scores yet. Go set one!</p>
-        <p class="note">Scores are saved in this browser.</p>
+        <p class="note" id="board-status" aria-live="polite">Loading the online leaderboard…</p>
       </div>
       <div class="panel" id="panel-badges" role="tabpanel" aria-labelledby="tab-badges" hidden>
         <p class="title-line" id="title-line">Your title: Rookie</p>
