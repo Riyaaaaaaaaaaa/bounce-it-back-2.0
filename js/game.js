@@ -1563,6 +1563,7 @@
       } else {
         this.state[mode] = r.status === 503 ? 'off' : 'error';
       }
+      if (el.records.classList.contains('show') && G.boardMode === mode) renderBoard();
       return this.cache[mode] || null;
     },
   };
@@ -1580,7 +1581,7 @@
       el.rankLine.textContent = d.saved
         ? `Saved as ${name}: #${ordinal(d.rank)} of ${ordinal(d.total)} on the ${MODES[m].name} leaderboard`
         : `Your best is still ${fmtScore(m, d.best)} (#${ordinal(d.rank)} of ${ordinal(d.total)}). Saved on this device too.`;
-      Online.load(m).then(() => { if (el.records.classList.contains('show')) renderRecords(); });
+      Online.load(m); // redraws the board itself if it's open
     } else if (r.status === 400 || r.status === 429) {
       el.rankLine.textContent = (r.data && r.data.error ? r.data.error : 'That score couldn’t be saved.') + ' Saved on this device.';
       if (r.data && /name/i.test(r.data.error || '')) { // let them pick another name (already saved locally, so don't save that twice)
@@ -1659,26 +1660,43 @@
   }
 
   // ================================================================ records & settings screens
+  let lastBoardDraw = '';
   function renderRecords() {
+    renderBoard();
+    renderBadges();
+  }
+  // The leaderboard tab. Online scores (everyone's) when we have them; this browser's own top 10 only if
+  // the online board can't be reached. While a refresh is in flight we keep showing the last online list,
+  // and we only rebuild the list when something actually changed, so it never flickers between sources.
+  function renderBoard() {
     const m = G.boardMode;
     for (const b of $$('.board-mode')) b.setAttribute('aria-pressed', String(b.dataset.mode === m));
-    // Prefer the online board (everyone's scores); fall back to this browser's own top 10.
-    const online = Online.state[m] === 'ok' ? Online.cache[m] : null;
-    const rows = online ? online.rows : Boards[m];
     const st = Online.state[m];
+    const online = Online.cache[m] || null;
+    let rows = [];
+    let status;
     if (online) {
+      rows = online.rows;
       const you = online.you;
-      el.boardStatus.textContent = `Everyone’s best · ${ordinal(online.total)} player${online.total === 1 ? '' : 's'}`
-        + (you ? ` · you’re #${ordinal(you.rank)}` : '');
-    } else if (st === 'loading') {
-      el.boardStatus.textContent = 'Loading the online leaderboard…';
-    } else {
-      el.boardStatus.textContent = st === 'off'
+      status = `Everyone’s best · ${ordinal(online.total)} player${online.total === 1 ? '' : 's'}`
+        + (you ? ` · you’re #${ordinal(you.rank)}` : '')
+        + (st === 'error' ? ' · couldn’t refresh' : '');
+    } else if (st === 'off' || st === 'error') {
+      rows = Boards[m];
+      status = st === 'off'
         ? 'The online leaderboard isn’t set up yet, so these are this browser’s scores.'
         : 'Couldn’t reach the online leaderboard, so these are this browser’s scores.';
+    } else {
+      status = 'Loading the online leaderboard…';
     }
+    setText(el.boardStatus, status);
+    const loading = !online && st !== 'off' && st !== 'error';
+    const key = m + '|' + (online ? 'online' : loading ? 'loading' : 'local') + '|' + JSON.stringify(rows);
+    if (key === lastBoardDraw) return;
+    lastBoardDraw = key;
+    el.boardList.classList.toggle('loading', loading);
     el.boardList.replaceChildren();
-    el.boardEmpty.hidden = rows.length > 0;
+    el.boardEmpty.hidden = loading || rows.length > 0;
     rows.forEach((e, i) => {
       const li = document.createElement('li');
       if (online ? e.you : e === G.lastEntry) li.className = 'me';
@@ -1692,7 +1710,9 @@
       li.append(rank, who, lvl, sc);
       el.boardList.append(li);
     });
+  }
 
+  function renderBadges() {
     el.badgeGrid.replaceChildren();
     for (const b of BADGES) {
       const d = document.createElement('div');
@@ -1735,6 +1755,7 @@
     commitPending();
     G.recordsFrom = el.over.classList.contains('show') ? 'over' : 'menu';
     G.boardMode = G.recordsFrom === 'over' && G.lastEntryMode ? G.lastEntryMode : (G.mode === 'duel' ? 'classic' : G.mode);
+    renderBadges();
     refreshBoard(G.boardMode);
     selectTab(tab || 'board');
     setScreen('records');
@@ -1742,10 +1763,9 @@
   }
   // Show what we have right away, then refresh from the server and redraw if this board is still open.
   function refreshBoard(m) {
-    renderRecords();
-    if (Online.state[m] === 'loading') return;
-    if (Online.state[m] !== 'ok') { Online.state[m] = 'loading'; renderRecords(); }
-    Online.load(m).then(() => { if (el.records.classList.contains('show') && G.boardMode === m) renderRecords(); });
+    renderBoard();
+    if (Online.state[m] === 'loading') return; // a refresh is already on its way and redraws when it lands
+    Online.load(m);
   }
   function closeRecords() {
     setScreen(G.recordsFrom);

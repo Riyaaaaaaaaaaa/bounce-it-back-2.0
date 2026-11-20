@@ -406,7 +406,9 @@ kbd {
 }
 .board li:nth-child(odd) { background: color-mix(in srgb, var(--sand) 55%, transparent); }
 .board li:first-child .pts { color: var(--rust); }
-.board li.me { outline: 2px solid var(--rust); animation: rise .5s both; }
+.board li.me { outline: 2px solid var(--rust); outline-offset: -2px; }
+.board { min-height: 120px; }
+.board.loading { background: repeating-linear-gradient(180deg, color-mix(in srgb, var(--sand) 45%, transparent) 0 34px, transparent 34px 38px); border-radius: 8px; opacity: .6; }
 .board .rank { font-family: var(--mono); font-size: 13px; opacity: .6; }
 .board .who { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .board .lvl { font-family: var(--mono); font-size: 12px; opacity: .6; }
@@ -473,7 +475,7 @@ kbd {
   .badges { grid-template-columns: 1fr 1fr; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .toast, .toast.out, .board li.me { animation: none; }
+  .toast, .toast.out { animation: none; }
 }
 
 /* =================================================================== v4 */
