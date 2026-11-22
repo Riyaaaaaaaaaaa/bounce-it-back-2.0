@@ -35,11 +35,22 @@
     get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage unavailable */ } },
   };
+  const prefs = {
+    touch: store.get('bib.touch', 'drag') === 'direct' ? 'direct' : 'drag',
+    haptics: store.get('bib.haptics', true) !== false,
+  };
 
   const motionQuery = window.matchMedia ? matchMedia('(prefers-reduced-motion: reduce)') : null;
   let reduced = !!(motionQuery && motionQuery.matches);
   if (motionQuery && motionQuery.addEventListener) motionQuery.addEventListener('change', (e) => { reduced = e.matches; });
   const finePointer = window.matchMedia ? matchMedia('(pointer: fine)').matches : true;
+  // Touch screens get easier controls: drag-anywhere, a thumb zone, slightly wider paddles and a gentler start.
+  const coarsePointer = window.matchMedia ? matchMedia('(pointer: coarse)').matches : false;
+  let touchSeen = coarsePointer; // also turns on at the first real touch (e.g. a touchscreen laptop)
+  const touchUI = () => touchSeen;
+  const isTouch = (e) => e.pointerType === 'touch' || e.pointerType === 'pen';
+  const canVibrate = typeof navigator.vibrate === 'function';
+  const DRAG_GAIN = 1.5; // drag-anywhere: the paddle moves 1.5× as far as your finger
 
   // ================================================================ tuning & content
   const LEVEL_HITS = 8;          // bounces per level (Classic)
@@ -518,15 +529,19 @@
     canvas.style.width = W + 'px';
     canvas.style.height = H + 'px';
 
+    const touch = touchUI();
     M.inset = clamp(H * 0.035, 14, 34);
+    // Upright phones and tablets: lift the bottom paddle so a thumb can rest underneath without hiding it.
+    M.botInset = touch && H > W * 1.15 ? clamp(H * 0.1, 56, 100) : M.inset;
     M.padH = W < 500 ? 10 : 12;
-    M.basePadW = clamp(W * 0.22, 88, 190);
-    M.ballR = clamp(Math.min(W, H) * 0.011, 6.5, 10);
-    M.baseSpeed = clamp(H * 0.62, 330, 600);
+    M.basePadW = clamp(W * 0.22, 88, 190) * (touch ? 1.2 : 1);   // touch assist: wider paddles
+    M.unit = clamp(Math.min(W, H) * 0.011, 6.5, 10);             // size unit for orbs and bumpers
+    M.ballR = clamp(Math.min(W, H) * 0.015, 9, 13);              // the ball itself (bigger than before)
+    M.baseSpeed = clamp(H * 0.62, 330, 600) * (touch ? 0.9 : 1); // touch assist: a gentler start
     M.topY = M.inset;                    // top edge of top paddle
-    M.botY = H - M.inset - M.padH;       // top edge of bottom paddle
+    M.botY = H - M.botInset - M.padH;    // top edge of bottom paddle
     document.documentElement.style.setProperty('--hud-top', (M.inset + M.padH + 14) + 'px');
-    document.documentElement.style.setProperty('--hud-bottom', (M.inset + M.padH + 18) + 'px');
+    document.documentElement.style.setProperty('--hud-bottom', (M.botInset + M.padH + 18) + 'px');
 
     for (const p of padList()) {
       if (!p.w) p.w = M.basePadW;
@@ -534,8 +549,8 @@
       if (p.targetX !== null) p.targetX = clamp(p.targetX, 0, W);
     }
     for (const b of balls) { b.r = M.ballR; b.x = clamp(b.x, b.r, W - b.r); b.y = clamp(b.y, M.topY, M.botY); }
-    for (const t of targets) { t.r = M.ballR * 2.6; t.x = clamp(t.x, t.r, W - t.r); t.y = clamp(t.y, H * 0.25, H * 0.75); }
-    for (const u of bumpers) { u.r = M.ballR * 3.2; u.y = u.yFrac * H; u.x = clamp(u.x, u.r + 10, W - u.r - 10); }
+    for (const t of targets) { t.r = M.unit * 2.6; t.x = clamp(t.x, t.r, W - t.r); t.y = clamp(t.y, H * 0.25, H * 0.75); }
+    for (const u of bumpers) { u.r = M.unit * 3.2; u.y = u.yFrac * H; u.x = clamp(u.x, u.r + 10, W - u.r - 10); }
     if (G.boss) { G.boss.r = bossRadius() * (G.boss.mini ? 0.7 : 1); }
   }
 
@@ -638,7 +653,7 @@
     let r0 = Math.random() * pool.reduce((s, [, o]) => s + o.w, 0);
     let type = pool[0][0];
     for (const [k, o] of pool) { r0 -= o.w; if (r0 <= 0) { type = k; break; } }
-    const r = M.ballR * 2.6;
+    const r = M.unit * 2.6;
     let x, y, tries = 0;
     const blocked = (x, y) => targets.some((t) => Math.hypot(t.x - x, t.y - y) < r * 4)
       || (!G.boss && bumpers.some((u) => Math.abs(u.y - y) < u.r + r * 1.5))
@@ -655,7 +670,7 @@
     const want = G.level >= 6 ? 2 : G.level >= 3 ? 1 : 0;
     while (bumpers.length < want) {
       const i = bumpers.length;
-      const r = M.ballR * 3.2;
+      const r = M.unit * 3.2;
       const yFrac = i ? 0.64 : 0.36;
       bumpers.push({ x: rand(W * 0.25, W * 0.75), y: yFrac * H, yFrac, r, vx: (Math.random() < 0.5 ? -1 : 1) * 60, age: 0, hit: 0 });
       ring(bumpers[i].x, bumpers[i].y, r * 4, C.ink, 3, 0.6);
@@ -694,7 +709,7 @@
   }
   function ring(x, y, max, color = C.rust, width = 3, life = 0.45, start = 0) { rings.push({ x, y, max, color, width, life, t: start }); }
   function popup(x, y, text, { size = 26, color = C.ink, life = 0.9, font = FONT_SANS, weight = 800, italic = false } = {}) {
-    popups.push({ x: clamp(x, 40, W - 40), y: clamp(y, M.inset + 100, H - M.inset - 50), text, size, color, life, t: 0, font, weight, italic });
+    popups.push({ x: clamp(x, 40, W - 40), y: clamp(y, M.inset + 100, H - M.botInset - 50), text, size, color, life, t: 0, font, weight, italic });
   }
   function shake(amount) { G.trauma = Math.min(1, G.trauma + amount); }
   function flash(alpha, color) { G.flash = Math.max(G.flash, alpha); G.flashColor = color; }
@@ -745,6 +760,10 @@
     resetRun();
     G.state = 'playing';
     balls = [serveBall(1, G.mode === 'duel' ? 1.1 : 0.65)];
+    // The first few touch games show a "drag anywhere" hint.
+    G.touchHintT = 0;
+    const shown = store.get('bib.touchHints', 0);
+    if (touchUI() && prefs.touch === 'drag' && shown < 3) { G.touchHintT = 3.5; store.set('bib.touchHints', shown + 1); }
     el.hud.hidden = false;
     el.hud.dataset.mode = G.mode;
     updateHud();
@@ -904,6 +923,7 @@
 
     const perfect = Math.abs(offset) < 0.22;
     p.flash = 1;
+    if (playing) buzz(perfect ? [14, 40, 14] : 10);
     p.bump = 1;
 
     const dirY = isBot ? -Math.PI / 2 : Math.PI / 2;
@@ -1214,7 +1234,7 @@
         const ty = which === 'bot' ? M.botY : M.topY + M.padH;
         const T = Math.abs(ty - B.y) / v;
         for (const off of fan) {
-          G.projectiles.push({ x: B.x, y: B.y + (which === 'bot' ? B.r : -B.r), vx: ((p.x - B.x) / T) * rand(0.7, 1.05) + off * v, vy: which === 'bot' ? v : -v, r: Math.max(6, M.ballR * 0.9) });
+          G.projectiles.push({ x: B.x, y: B.y + (which === 'bot' ? B.r : -B.r), vx: ((p.x - B.x) / T) * rand(0.7, 1.05) + off * v, vy: which === 'bot' ? v : -v, r: Math.max(6, M.unit * 0.9) });
         }
       }
       if (kind === 'spray') popup(B.x, B.y - B.r - 30, 'spray!', { size: 26, color: C.rust, font: FONT_SERIF, weight: 400, italic: true });
@@ -1306,7 +1326,7 @@
   function loseBall(b) {
     const edge = b.y > H / 2 ? 1 : -1;
     const x = clamp(b.x, 10, W - 10);
-    const edgeY = edge > 0 ? H - M.inset : M.inset;
+    const edgeY = edge > 0 ? H - M.botInset : M.inset;
     if (G.state === 'menu') { balls = [serveBall(1)]; return; }
     if (G.state !== 'playing') return;
 
@@ -1387,6 +1407,7 @@
     G.rageT = 0;
     el.btnPause.hidden = true;
     if (kind === 'miss') {
+      buzz([60, 50, 140]);
       emit(x, y, 70, { angle: y > H / 2 ? -Math.PI / 2 : Math.PI / 2, spread: 2.2, speed: [150, 700], colors: [C.rust, C.ink, C.rose, C.sand], life: [0.6, 1.4] });
       ring(x, y, Math.max(W, H) * 0.5, C.rust, 8, 1.2);
       shake(0.9);
@@ -1898,6 +1919,10 @@
     settingsFrom = G.state === 'paused' ? 'pause' : G.state === 'over' ? 'over' : 'menu';
     for (const b of $$('.pack')) b.setAttribute('aria-checked', String(b.dataset.pack === Sfx.pack));
     el.musicToggle.setAttribute('aria-checked', String(Music.on));
+    $('#touch-setting').hidden = !touchUI();
+    for (const b of $$('.touch-opt')) b.setAttribute('aria-checked', String(b.dataset.touch === prefs.touch));
+    $('#haptics-setting').hidden = !(touchUI() && canVibrate);
+    $('#haptics-toggle').setAttribute('aria-checked', String(prefs.haptics));
     setScreen('settings');
     $('#btn-settings-back').focus({ preventScroll: true });
   }
@@ -2080,6 +2105,7 @@
     G.flash = Math.max(0, G.flash - dt * 2.2);
     G.scorePop = Math.max(0, G.scorePop - dt * 4);
     G.bannerT = Math.max(0, G.bannerT - dt);
+    G.touchHintT = Math.max(0, (G.touchHintT || 0) - dt);
     G.shownScore = lerp(G.shownScore, G.score, damp(12, dt));
 
     updateChips();
@@ -2234,6 +2260,7 @@
     drawGravity();
     drawDanger();
     drawShield();
+    drawThumbZone();
     for (const r of rings) drawRing(r);
     if (!G.boss) for (const u of bumpers) drawBumper(u);
     for (const k of G.blocks) drawBlock(k);
@@ -2264,6 +2291,33 @@
     if (G.rageT > 0) drawVignette(0.3 + Math.sin(G.time * 10) * (reduced ? 0 : 0.1), C.rust);
     if (G.dangerSlow) drawVignette(0.3, C.ink);
     if (G.state === 'dying' && G.ending === 'miss') drawVignette(Math.min(1, G.deathT * 2) * 0.35, C.rust);
+  }
+
+  // A small grip in the space under the bottom paddle, plus the "drag anywhere" hint on the first touch games.
+  function drawThumbZone() {
+    const hasZone = M.botInset > M.inset + 10;
+    const zy = hasZone ? M.botY + M.padH + (H - M.botY - M.padH) / 2 : M.botY - 70;
+    ctx.save();
+    if (hasZone && G.mode !== 'duel') {
+      ctx.globalAlpha = 0.14;
+      ctx.fillStyle = fg();
+      roundRect(W / 2 - 22, zy - 2.5, 44, 5, 2.5);
+      ctx.fill();
+      ctx.lineWidth = 2; ctx.strokeStyle = fg(); ctx.lineCap = 'round';
+      for (const sx of [-1, 1]) {
+        ctx.beginPath(); ctx.moveTo(W / 2 + sx * 34, zy - 5); ctx.lineTo(W / 2 + sx * 40, zy); ctx.lineTo(W / 2 + sx * 34, zy + 5); ctx.stroke();
+      }
+    }
+    if (G.touchHintT > 0 && G.state === 'playing') {
+      const a = Math.min(1, G.touchHintT / 0.6) * (0.75 + 0.25 * Math.sin(G.time * 6));
+      ctx.globalAlpha = a;
+      ctx.font = `600 15px ${FONT_SANS}`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      const label = G.mode === 'duel' ? 'drag anywhere in your half' : 'drag anywhere to move';
+      ctx.lineWidth = 4; ctx.strokeStyle = theme().dark ? C.ink : C.paper; ctx.strokeText('←  ' + label + '  →', W / 2, zy - (hasZone ? 18 : 0));
+      ctx.fillStyle = C.rust; ctx.fillText('←  ' + label + '  →', W / 2, zy - (hasZone ? 18 : 0));
+    }
+    ctx.restore();
   }
 
   function drawBackground() {
@@ -2971,6 +3025,11 @@
     return `rgb(${pa.map((v, i) => Math.round(lerp(v, pb[i], t))).join(',')})`;
   }
 
+  function buzz(pattern) {
+    if (!canVibrate || !prefs.haptics || !touchUI()) return;
+    try { navigator.vibrate(pattern); } catch { /* not allowed here */ }
+  }
+
   // ================================================================ loop
   let lastT = performance.now();
   function frame(now) {
@@ -2993,8 +3052,37 @@
       for (const p of padList()) p.targetX = x;
     }
   }
-  window.addEventListener('pointermove', pointerTo, { passive: true });
-  canvas.addEventListener('pointerdown', (e) => { if (G.state === 'playing') pointerTo(e); });
+  // Drag-anywhere (touch): each finger moves its paddle by how far it slides, like a trackpad,
+  // so you can keep your thumb clear of the ball. Two players each drag in their own half.
+  const drags = new Map(); // pointerId → { x, which }
+  function startDrag(e) {
+    drags.set(e.pointerId, { x: e.clientX, which: G.mode === 'duel' ? (e.clientY < H / 2 ? 'top' : 'bot') : 'both' });
+  }
+  function dragMove(e) {
+    const d = drags.get(e.pointerId);
+    if (!d) { startDrag(e); return; } // e.g. the finger was already down when the game started
+    let dx = (e.clientX - d.x) * DRAG_GAIN;
+    d.x = e.clientX;
+    if (d.which === 'both' && reversed()) dx = -dx;
+    for (const p of d.which === 'both' ? padList() : [pads[d.which]]) {
+      p.targetX = clamp((p.targetX ?? p.x) + dx, p.w / 2, W - p.w / 2);
+    }
+  }
+  function noteTouch(e) {
+    if (isTouch(e) && !touchSeen) { touchSeen = true; resize(); }
+  }
+  window.addEventListener('pointermove', (e) => {
+    if (isTouch(e) && prefs.touch === 'drag') { if (G.state === 'playing') dragMove(e); return; }
+    pointerTo(e);
+  }, { passive: true });
+  canvas.addEventListener('pointerdown', (e) => {
+    noteTouch(e);
+    if (G.state !== 'playing') return;
+    if (isTouch(e) && prefs.touch === 'drag') startDrag(e);
+    else pointerTo(e);
+  });
+  window.addEventListener('pointerdown', noteTouch, { passive: true });
+  for (const type of ['pointerup', 'pointercancel']) window.addEventListener(type, (e) => drags.delete(e.pointerId), { passive: true });
 
   const KEYMAP = { a: 'a', A: 'a', d: 'd', D: 'd', ArrowLeft: 'left', ArrowRight: 'right' };
   window.addEventListener('keydown', (e) => {
@@ -3069,6 +3157,21 @@
       [0, 2, 4].forEach((s, i) => setTimeout(() => Sfx.bounce(s, i === 2, 0), i * 140)); // preview
     });
   }
+  for (const b of $$('.touch-opt')) {
+    b.addEventListener('click', () => {
+      prefs.touch = b.dataset.touch;
+      store.set('bib.touch', prefs.touch);
+      for (const o of $$('.touch-opt')) o.setAttribute('aria-checked', String(o === b));
+      drags.clear();
+      Sfx.init(); Sfx.click();
+    });
+  }
+  $('#haptics-toggle').addEventListener('click', () => {
+    prefs.haptics = !prefs.haptics;
+    store.set('bib.haptics', prefs.haptics);
+    $('#haptics-toggle').setAttribute('aria-checked', String(prefs.haptics));
+    buzz(20);
+  });
   el.musicToggle.addEventListener('click', () => {
     Sfx.init();
     Music.toggle(!Music.on);
@@ -3117,7 +3220,7 @@
 
   // Small hook for automated checks in the browser console.
   window.__bounce = {
-    G, pads, M, Boards, bests, earned, Music, Sfx, equip, lifetime, COSMETICS, itemUnlocked,
+    G, pads, M, prefs, touchUI, Boards, bests, earned, Music, Sfx, equip, lifetime, COSMETICS, itemUnlocked,
     get balls() { return balls; },
     get targets() { return targets; },
     get bumpers() { return bumpers; },

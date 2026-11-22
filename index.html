@@ -86,7 +86,7 @@
         <button class="btn ghost" id="btn-locker" type="button">Locker <span class="locker-dot" hidden></span></button>
       </div>
       <ul class="howto">
-        <li><b>Move</b> mouse, drag, or <kbd>←</kbd><kbd>→</kbd> / <kbd>A</kbd><kbd>D</kbd></li>
+        <li><b>Move</b> mouse, drag anywhere on touch screens, or <kbd>←</kbd><kbd>→</kbd> / <kbd>A</kbd><kbd>D</kbd></li>
         <li><b>Combo</b> centre hits in a row: 5 → ×2, 10 → ×3, 20 → ×5 + <strong>Rage mode</strong></li>
         <li><b>2P</b> bottom: <kbd>A</kbd><kbd>D</kbd> or mouse · top: <kbd>←</kbd><kbd>→</kbd> · or drag in your half</li>
       </ul>
@@ -199,6 +199,17 @@
       <div class="setting row">
         <span class="setting-label" id="music-label">Background music</span>
         <button class="switch" id="music-toggle" type="button" role="switch" aria-checked="true" aria-labelledby="music-label"><i></i></button>
+      </div>
+      <div class="setting" id="touch-setting" hidden>
+        <span class="setting-label" id="touch-label">Touch controls</span>
+        <div class="seg" role="radiogroup" aria-labelledby="touch-label">
+          <button class="touch-opt" type="button" role="radio" data-touch="drag" aria-checked="true">Drag anywhere</button>
+          <button class="touch-opt" type="button" role="radio" data-touch="direct" aria-checked="false">Follow finger</button>
+        </div>
+      </div>
+      <div class="setting row" id="haptics-setting" hidden>
+        <span class="setting-label" id="haptics-label">Vibrate on hits</span>
+        <button class="switch" id="haptics-toggle" type="button" role="switch" aria-checked="true" aria-labelledby="haptics-label"><i></i></button>
       </div>
       <p class="note">Press <kbd>M</kbd> any time to mute everything.</p>
       <button class="btn primary" id="btn-settings-back" type="button">Done</button>

@@ -23,11 +23,20 @@ Plain HTML, CSS and JavaScript on a `<canvas>`. There's no build step, no librar
 
 | | |
 |---|---|
-| **Move** | Mouse, drag a finger on touch screens, or `←` `→` / `A` `D` |
+| **Move** | Mouse, drag anywhere on touch screens (see below), or `←` `→` / `A` `D` |
 | **Two players** | Bottom: `A` `D` or the mouse. Top: `←` `→`. On a touch screen, each player drags in their own half |
 | **Start / restart** | Click **Play**, or press `Space` / `Enter` |
 | **Pause** | `P` or `Esc`, or the pause button. The pause screen shows your run stats. The game also pauses by itself when you switch tabs or windows |
 | **Sound** | `M` mutes everything. The settings button has three sound packs (Classic, Chiptune, Soft) and a background-music switch |
+
+**Playing on a phone or iPad**
+
+Touch screens get controls built for thumbs:
+- **Drag anywhere:** slide your finger anywhere on the screen and the paddle moves by the same amount (1.5× as far), like a laptop trackpad, so your thumb never has to cover the paddle or the ball. In Two players, each player drags in their own half. Prefer the paddle to sit under your finger? Choose **Follow finger** in Settings.
+- **Thumb zone:** when the device is upright, the bottom paddle sits a little higher, with a strip underneath for your thumb.
+- **Touch assist:** paddles are 20% wider and the ball starts 10% slower, to make up for fingers being less precise than a mouse.
+- **Vibration** on hits, on phones that support it (Android; iPhones don't allow it in browsers). It can be turned off in Settings.
+- The first few touch games show a "drag anywhere to move" hint.
 
 **Scoring and combos**
 
@@ -113,6 +122,12 @@ Each locked item shows what unlocks it, for example *Neon paddles: reach level 5
 ## What's in 2.0
 
 2.0 is the original game rebuilt in rounds (newest first).
+
+### v5.2
+
+- **Online leaderboard** shared by everyone who plays (see the setup section).
+- **Better on phones and tablets:** drag-anywhere controls, a thumb zone, touch assist, vibration and a first-game hint.
+- **A bigger ball** on every device (orbs and bumpers stay the same size).
 
 ### v5.1
 
